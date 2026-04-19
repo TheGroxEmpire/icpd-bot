@@ -4,10 +4,11 @@
 
 The ICPD Warera Discord Bot is a single-service application backed by PostgreSQL.
 
-It has two main responsibilities:
+It has three main responsibilities:
 
 - respond to Discord slash commands
 - maintain a local cache of Warera data used to compute recommended regions
+- publish managed embeds and alerts based on sanctions, proxy ownership, and council recommendations
 
 The bot should not depend on live Warera responses during normal command execution. Instead, a scheduled sync process refreshes cached country and region data, and command handlers read from that cache.
 
@@ -79,6 +80,7 @@ Responsibilities:
 
 - evaluate eligible regions
 - rank regions according to ICPD policy
+- combine sanction level, proxy ownership, occupation status, and council recommendations
 - produce explanations suitable for Discord embeds
 
 This should be implemented as a pure service where possible so it can be tested without Discord.
@@ -91,8 +93,20 @@ Responsibilities:
 - track active managed messages
 - periodically edit existing messages
 - stop refreshing deleted or disabled entries
+- render all available Warera goods with their recommended locations
 
 This layer manages long-lived Discord output owned by the bot.
+
+### 7. Alerting layer
+
+Responsibilities:
+
+- detect production specialization changes in sanctioned countries
+- detect council recommendation changes for watched locations
+- post notifications to configured Discord channels
+- suppress duplicate alerts across refresh cycles
+
+This layer turns cached state changes into actionable Discord notifications.
 
 ## Data Flow
 
@@ -114,6 +128,7 @@ scheduled task starts
 -> fetch Warera countries/regions
 -> normalize data
 -> write cache tables
+-> compare sanctioned-country specialization changes with previous cache state
 -> update sync metadata
 -> expose freshness timestamps to bot status commands
 ```
@@ -126,7 +141,19 @@ admin runs /start_list_recommended_region
 -> bot stores message/channel/guild/interval in database
 -> scheduled task loads active entries
 -> recommendation engine computes ranked list from cache
+-> embed builder groups recommendations by good type for all available Warera goods
 -> bot edits the stored message
+```
+
+## Recommendation command flow
+
+```text
+Council member runs recommendation command
+-> bot validates council permission
+-> command service validates location and good inputs
+-> service stores or updates the recommendation in PostgreSQL
+-> bot refreshes managed embeds
+-> alerting layer posts a recommendation-change alert if configured
 ```
 
 ## Recommendation Policy
@@ -137,13 +164,15 @@ Initial policy based on current requirements:
 
 - consider the highest-production regions first
 - a region is eligible if its current country is not sanctioned
-- a region may also be eligible if its current country is sanctioned but the region has a full resistance bar
+- a limited sanction still permits factory placement in proxy countries owned by ICPD countries when that proxy country is occupied by the sanctioned country
+- a full sanction bars factory placement for any company using workers from ICPD countries
 - the output should explain why a region is recommended
+- the output should show recommended locations for every good currently available on Warera
 
 Recommended implementation approach:
 
 - define a single policy function that accepts normalized region and country inputs
-- return structured output such as `eligible`, `score`, `reason`, and `flags`
+- return structured output such as `eligible`, `score`, `reason`, `flags`, and `good_type`
 - keep constants and thresholds configurable
 
 ### Open business-rule items
@@ -151,9 +180,9 @@ Recommended implementation approach:
 These should be finalized during implementation:
 
 - the exact scoring formula for "highest production"
-- whether development, strategic resource, or tax data affects ranking
-- how "full resistance bar" is calculated when upstream values are close but not exactly equal
-- how many regions appear in one embed page
+- whether development, strategic resource, tax data, or specialization should affect ranking within a good type
+- how occupation is derived from Warera cache data for proxy-country eligibility
+- how many goods and locations appear in one embed page before pagination is required
 
 ## Database Design
 
@@ -167,12 +196,15 @@ PostgreSQL is used for both persistent configuration and cached game data.
 - Council role ID
 - default refresh interval
 - optional admin channel IDs
+- optional recommendation alert channel ID
+- optional specialization alert channel ID
 
 #### `sanctioned_countries`
 
 - country ID
 - country code
 - country name snapshot
+- sanction level (limited, full)
 - optional sanction reason
 - created by
 - created at
@@ -184,6 +216,34 @@ PostgreSQL is used for both persistent configuration and cached game data.
 - country name snapshot
 - created by
 - created at
+
+#### `icpd_proxies`
+
+- country ID
+- country code
+- country name snapshot
+- overlord country ID (linked to `icpd_countries`)
+- overlord country name snapshot
+- created by
+- created at
+
+#### `location_recommendations`
+
+- guild ID
+- location identifier
+- location name snapshot
+- good type
+- recommended factory target
+- recommendation note
+- updated by
+- updated at
+
+#### `specialization_alert_state`
+
+- country ID
+- last known specialization fingerprint
+- last alerted fingerprint
+- updated at
 
 #### `active_region_lists`
 
@@ -199,6 +259,7 @@ PostgreSQL is used for both persistent configuration and cached game data.
 - country ID
 - code
 - name
+- production specialization fields needed for alerting
 - normalized JSON payload or typed columns
 - fetched at
 
@@ -259,6 +320,7 @@ Optional future services:
 - structured logs for command execution and sync jobs
 - clear stale-data reporting in `/bot_status`
 - graceful handling when Discord message edits fail
+- graceful handling when alert channels are missing or permissions change
 
 ## Non-Goals for v1
 

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a private, production-ready Discord bot for ICPD operations in Warera with durable cached data, role-aware slash commands, and an automatically refreshed recommended-region embed.
+Build a private, production-ready Discord bot for ICPD operations in Warera with durable cached data, role-aware slash commands, sanction-aware recommendation rules, proxy-country tracking, and an automatically refreshed recommended-region embed.
 
 ## Phase 0: Repository Bootstrap
 
@@ -26,7 +26,7 @@ Deliverables:
 
 - SQLAlchemy setup
 - Alembic migrations
-- initial tables for config, sanctioned countries, ICPD countries, active region lists, and sync state
+- initial tables for config, sanctioned countries, ICPD countries, ICPD proxies, recommendation state, active region lists, and sync state
 
 Definition of done:
 
@@ -68,11 +68,15 @@ Deliverables:
 
 - add/remove/list sanctioned countries
 - add/remove/list ICPD countries
+- add/remove/list ICPD proxies
+- sanction level support for limited and full sanctions
 - command responses for success and failure cases
 
 Definition of done:
 
 - Council members can manage country lists from Discord
+- Council members can manage sanctions with the correct sanction level
+- Council members can manage proxy countries owned by ICPD countries
 - changes persist in PostgreSQL
 
 ## Phase 5: Recommendation Engine
@@ -81,12 +85,17 @@ Deliverables:
 
 - normalized recommendation inputs
 - region eligibility rules
+- recommendation storage per location and good type
+- sanctioned-country specialization change detection
+- recommendation change alerts for watched locations
 - region ranking and explanation output
 - test coverage for ranking behavior
 
 Definition of done:
 
 - the engine produces deterministic ranked output from cached data
+- limited sanctions allow factories in proxy countries occupied by the sanctioned country
+- full sanctions bar factories for any company using workers from ICPD countries
 - business rules are isolated in one service
 
 ## Phase 6: Managed Embed Refresh
@@ -96,12 +105,15 @@ Deliverables:
 - `/start_list_recommended_region`
 - `/stop_list_recommended_region`
 - `/refresh_list_recommended_region`
+- Council slash commands to set and update location recommendations
 - active embed tracking and scheduled edits
 
 Definition of done:
 
 - an admin can create a managed embed
 - the bot refreshes the same message on schedule
+- the embed lists recommended locations for every good available on Warera
+- recommendation changes and sanctioned-country specialization changes can trigger alerts in configured channels
 - disabled messages stop refreshing
 
 ## Phase 7: Quality and Operations
@@ -151,6 +163,7 @@ If development starts immediately, follow this order:
 
 - upstream Warera payload changes
 - unclear recommendation scoring rules
+- specialization changes in sanctioned countries may create noisy alert traffic if not deduplicated
 - Discord permission edge cases
 - long-running refresh loops editing deleted messages
 - hidden schema growth from storing raw payloads carelessly

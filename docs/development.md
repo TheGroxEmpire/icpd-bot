@@ -34,6 +34,8 @@ Planned variables:
 - `WARERA_API_BASE_URL`
 - `SYNC_INTERVAL_SECONDS`
 - `RECOMMENDED_REGION_REFRESH_MINUTES`
+- `RECOMMENDATION_ALERT_CHANNEL_ID`
+- `SPECIALIZATION_ALERT_CHANNEL_ID`
 - `LOG_LEVEL`
 
 Optional later variables:
@@ -41,6 +43,7 @@ Optional later variables:
 - `DISCORD_PUBLIC_GUILD_IDS`
 - `HTTP_TIMEOUT_SECONDS`
 - `METRICS_ENABLED`
+- `SPECIALIZATION_ALERT_DEDUP_WINDOW_MINUTES`
 
 ## Local Setup Workflow
 
@@ -106,7 +109,7 @@ src/icpd_bot/
 - `integrations/`: Warera API client and Discord wrappers if needed
 - `jobs/`: scheduled sync and refresh tasks
 - `models/`: ORM models and domain types
-- `services/`: recommendation logic, permissions, cache orchestration
+- `services/`: recommendation logic, sanction-policy evaluation, permissions, cache orchestration, and recommendation alerting
 - `views/`: embed building and Discord presentation helpers
 
 ## Coding Rules
@@ -118,6 +121,7 @@ src/icpd_bot/
 - keep business logic outside command handlers
 - avoid direct SQL inside command modules
 - do not call the Warera API directly from slash commands unless explicitly intended
+- keep sanction policy and proxy-country eligibility logic in one service, not spread across commands or views
 
 ### Database
 
@@ -125,18 +129,21 @@ src/icpd_bot/
 - configuration tables and cache tables must have clear ownership and indexes
 - prefer explicit columns for fields used in ranking or filtering
 - keep raw upstream payloads only when they help with resilience or debugging
+- store sanction level, proxy ownership, and council recommendations in first-class tables so embeds and alerts can refresh from durable state
 
 ### Scheduling
 
 - scheduled tasks must be idempotent
 - scheduled tasks should log start, success, and failure
 - task intervals belong in configuration, not hardcoded magic numbers
+- alerting jobs should deduplicate specialization and recommendation-change notifications
 
 ### Discord integration
 
 - use guild-scoped commands during development
 - keep command names stable once published
 - validate permissions at runtime even if command registration also restricts them
+- recommendation-setting commands should be Council-only, while embed lifecycle commands should remain admin-controlled
 
 ## Suggested Development Milestones
 
@@ -145,8 +152,9 @@ src/icpd_bot/
 3. Implement Warera sync client and cache writes
 4. Implement permissions and Council-only commands
 5. Implement recommended-region computation
-6. Implement embed creation and scheduled refresh
-7. Add tests, linting, and CI
+6. Implement council recommendation commands and persistence
+7. Implement embed creation, scheduled refresh, and alerting
+8. Add tests, linting, and CI
 
 ## Testing Strategy
 
@@ -155,6 +163,8 @@ src/icpd_bot/
 Focus on:
 
 - recommendation scoring and eligibility
+- limited vs full sanction behavior
+- proxy-country eligibility when occupied by sanctioned countries
 - permission checks
 - data normalization from Warera payloads
 
@@ -165,12 +175,17 @@ Focus on:
 - database writes and migrations
 - command service behavior against a test database
 - refresh job behavior when active managed messages exist
+- alert generation when a sanctioned country changes production specialization
+- alert generation when a stored council recommendation changes for a location
 
 ### Manual checks
 
 - slash commands appear in the target guild
 - Council-only commands reject unauthorized users
 - admin commands update the tracked embed correctly
+- the embed lists a recommended location for every good currently available on Warera
+- specialization changes in sanctioned countries post to the configured channel
+- recommendation changes for watched locations post alerts once and refresh the managed embed
 - stale cache state is visible in status output
 
 ## GitHub Workflow
