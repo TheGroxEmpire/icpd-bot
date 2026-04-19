@@ -8,6 +8,7 @@ This repository is intended to host a Python-based Discord bot that:
 - manages ICPD-specific country lists such as sanctioned countries and ICPD countries
 - caches Warera data locally so the bot can respond even if the upstream API is slow
 - publishes and refreshes a recommended-region embed on a schedule
+- can be invited to more than one Discord server when alerts or public embeds need to live outside the main ICPD guild
 
 ## Product Goals
 
@@ -15,6 +16,7 @@ This repository is intended to host a Python-based Discord bot that:
 - Restrict sensitive commands to ICPD Council members
 - Allow Discord admins to start and manage public informational embeds
 - Keep recommendations fast by reading from local cache instead of the Warera API at request time
+- allow the bot to exist in multiple Discord servers while keeping one primary ICPD control guild for v1
 - Run the full stack with Docker Compose
 
 ## Proposed Stack
@@ -103,6 +105,21 @@ The exact command set can expand, but these are the baseline capabilities the ar
 - Keep recommendation logic isolated in a dedicated policy module
 - Make every scheduled job idempotent and safe to rerun
 - Prefer explicit configuration over hidden constants
+
+## Deployment
+
+Use the single deployment script:
+
+```bash
+./deploy.sh
+```
+
+It will:
+
+- build the Docker image
+- start PostgreSQL
+- apply Alembic migrations
+- start the bot container
 
 ## Documents
 

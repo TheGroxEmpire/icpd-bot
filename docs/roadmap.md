@@ -184,4 +184,4 @@ If development starts immediately, follow this order:
 - historical cache snapshots for analytics
 - more public informational commands
 - metrics and dashboards
-- multi-guild support if the project grows
+- richer per-guild configuration if the project grows beyond one primary ICPD guild with auxiliary servers

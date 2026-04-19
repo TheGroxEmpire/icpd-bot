@@ -10,12 +10,11 @@ This document explains how the project should be developed once implementation b
 
 - Git
 - Docker and Docker Compose
-- Python `3.13`
 - PostgreSQL client tools if you want direct DB access
 
 ### Recommended
 
-- `uv` or `pip` for dependency management
+- host Python `3.13` only if you intentionally want to run outside Docker
 - `pytest`
 - `ruff`
 - `mypy`
@@ -34,8 +33,6 @@ Planned variables:
 - `WARERA_API_BASE_URL`
 - `SYNC_INTERVAL_SECONDS`
 - `RECOMMENDED_REGION_REFRESH_MINUTES`
-- `RECOMMENDATION_ALERT_CHANNEL_ID`
-- `SPECIALIZATION_ALERT_CHANNEL_ID`
 - `LOG_LEVEL`
 
 Optional later variables:
@@ -47,41 +44,48 @@ Optional later variables:
 
 ## Local Setup Workflow
 
-Once the codebase exists, local development should look like this:
+The default development workflow should use Docker so the project always runs on Python `3.13` regardless of the host machine.
+
+Local development should look like this:
 
 1. Clone the private GitHub repository
 2. Copy `.env.example` to `.env`
 3. Fill in Discord and database credentials
-4. Start PostgreSQL with Docker Compose
-5. Install Python dependencies
-6. Run Alembic migrations
-7. Start the bot
+4. Run the deployment script
 
 Expected command shape:
 
 ```bash
-docker compose up -d postgres
-alembic upgrade head
-python -m icpd_bot
+./deploy.sh
+```
+
+Additional useful commands:
+
+```bash
+docker compose run --rm test
+docker compose run --rm bot python --version
+docker compose run --rm bot ruff check .
 ```
 
 ## Docker Strategy
 
 ### Local development
 
-- use Docker Compose for PostgreSQL
-- optionally run the bot directly on the host machine for faster iteration
+- use Docker Compose for PostgreSQL, migrations, tests, and the bot
+- mount the repo into the container so code changes are visible immediately
+- PostgreSQL does not need to be exposed on a host port for the default workflow, which avoids conflicts with any local database already using `5432`
 
 ### Containerized development
 
 - use Docker Compose for both bot and database
-- mount the source tree as a bind mount if fast live reload is needed
+- use the same image for app runtime, migrations, and test commands so Python and dependencies stay consistent
 
 ### Production-like runs
 
 - build the bot image from a pinned Python `3.13-slim` base
 - inject secrets at runtime
 - avoid baking tokens into images
+- prefer the repo deployment script so setup stays one-command and repeatable
 
 ## Proposed Python Package Layout
 
@@ -144,6 +148,10 @@ src/icpd_bot/
 - keep command names stable once published
 - validate permissions at runtime even if command registration also restricts them
 - recommendation-setting commands should be Council-only, while embed lifecycle commands should remain admin-controlled
+- the shared alert channel is configured through bot commands and stored in the database, not in environment variables
+- if the alert channel is in another server, configure it by Discord channel ID so the bot can validate access directly
+- the shared alert channel may be in a different Discord server as long as the bot can access that channel
+- the bot may be invited to other Discord servers, but the primary command and policy configuration remains anchored to the configured ICPD guild for v1
 
 ## Suggested Development Milestones
 
@@ -180,6 +188,7 @@ Focus on:
 
 ### Manual checks
 
+- `docker compose run --rm bot python --version` shows Python `3.13`
 - slash commands appear in the target guild
 - Council-only commands reject unauthorized users
 - admin commands update the tracked embed correctly

@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "icpd-bot"
+version = "0.1.0"
+description = "Private Discord bot for ICPD operations in Warera."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "alembic>=1.14,<2.0",
+  "asyncpg>=0.30,<0.31",
+  "discord.py>=2.4,<3.0",
+  "httpx>=0.28,<0.29",
+  "pydantic-settings>=2.7,<3.0",
+  "psycopg2-binary>=2.9,<3.0",
+  "sqlalchemy[asyncio]>=2.0.36,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.13,<2.0",
+  "pytest>=8.3,<9.0",
+  "pytest-asyncio>=0.24,<0.25",
+  "ruff>=0.8,<0.9",
+]
+
+[project.scripts]
+icpd-bot = "icpd_bot.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.13"
+packages = ["icpd_bot"]
+strict = true

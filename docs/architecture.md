@@ -12,6 +12,8 @@ It has three main responsibilities:
 
 The bot should not depend on live Warera responses during normal command execution. Instead, a scheduled sync process refreshes cached country and region data, and command handlers read from that cache.
 
+The bot may be present in multiple Discord servers. In v1, one configured ICPD guild remains the home guild for command and policy management, while alerts or managed outputs may be delivered in other servers the bot has joined.
+
 ## System Context
 
 ```text
@@ -46,7 +48,7 @@ This layer should contain as little business logic as possible.
 
 Responsibilities:
 
-- verify the command is used in the configured guild
+- verify the command is used in the configured home guild when the command is home-guild only
 - verify whether the member has the ICPD Council role
 - verify whether the member has the required Discord admin permission
 
@@ -103,7 +105,7 @@ Responsibilities:
 
 - detect production specialization changes in sanctioned countries
 - detect council recommendation changes for watched locations
-- post notifications to configured Discord channels
+- post notifications to one configured shared alert channel
 - suppress duplicate alerts across refresh cycles
 
 This layer turns cached state changes into actionable Discord notifications.
@@ -196,8 +198,7 @@ PostgreSQL is used for both persistent configuration and cached game data.
 - Council role ID
 - default refresh interval
 - optional admin channel IDs
-- optional recommendation alert channel ID
-- optional specialization alert channel ID
+- optional shared alert channel ID for both recommendation and specialization alerts
 
 #### `sanctioned_countries`
 
@@ -233,7 +234,6 @@ PostgreSQL is used for both persistent configuration and cached game data.
 - location identifier
 - location name snapshot
 - good type
-- recommended factory target
 - recommendation note
 - updated by
 - updated at
