@@ -5,7 +5,7 @@ from discord import app_commands
 
 from icpd_bot.integrations.warera import WareraClient
 from icpd_bot.services.guild_config import GuildConfigService
-from icpd_bot.services.permissions import member_is_admin
+from icpd_bot.services.permissions import require_council_access
 from icpd_bot.services.warera_sync import WareraSyncService
 
 if TYPE_CHECKING:
@@ -15,11 +15,11 @@ if TYPE_CHECKING:
 def build_sync_commands(bot: "ICPDBot") -> list[app_commands.Command]:
     @app_commands.command(name="sync_warera_cache", description="Fetch fresh Warera data into the local cache.")
     async def sync_warera_cache(interaction: discord.Interaction) -> None:
-        if not member_is_admin(interaction):
-            await interaction.response.send_message(
-                "This command requires Discord administrator permission.",
-                ephemeral=True,
-            )
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
             return
 
         await interaction.response.defer(ephemeral=True)

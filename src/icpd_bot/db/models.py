@@ -19,6 +19,17 @@ class GuildConfig(Base):
     alert_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
+class GuildReadOnlyRole(Base):
+    __tablename__ = "guild_read_only_roles"
+
+    guild_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("guild_config.guild_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    role_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+
+
 class SanctionedCountry(Base, TimestampMixin):
     __tablename__ = "sanctioned_countries"
 
@@ -48,6 +59,7 @@ class IcpdProxy(Base, TimestampMixin):
     overlord_country_id: Mapped[str] = mapped_column(
         String(24),
         ForeignKey("icpd_countries.country_id", ondelete="RESTRICT"),
+        primary_key=True,
     )
     overlord_country_name_snapshot: Mapped[str] = mapped_column(String(255))
     created_by: Mapped[int] = mapped_column(BigInteger)

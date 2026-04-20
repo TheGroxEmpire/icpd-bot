@@ -32,13 +32,6 @@ class ICPDBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         guild = discord.Object(id=self.settings.discord_guild_id)
-        global_command_names = {
-            "bot_status",
-            "show_recommended_regions",
-            "list_sanctioned_countries",
-            "list_icpd_countries",
-            "list_icpd_proxies",
-        }
         commands = [
             build_status_command(self),
             *build_admin_config_commands(self),
@@ -46,13 +39,11 @@ class ICPDBot(commands.Bot):
             *build_sync_commands(self),
             *build_recommendation_commands(self),
         ]
+        self.tree.clear_commands(guild=None)
+        self.tree.clear_commands(guild=guild)
         for command in commands:
-            if command.name in global_command_names:
-                self.tree.add_command(command)
-            else:
-                self.tree.add_command(command, guild=guild)
+            self.tree.add_command(command, guild=guild)
         await self.tree.sync()
-        self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
 
         async with self.session_factory.session() as session:

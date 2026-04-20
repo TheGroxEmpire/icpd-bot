@@ -100,7 +100,10 @@ class IcpdProxyService:
         overlord_country_id: str,
         overlord_country_name: str,
     ) -> IcpdProxy:
-        record = await self.session.get(IcpdProxy, country.country_id)
+        record = await self.session.get(
+            IcpdProxy,
+            {"country_id": country.country_id, "overlord_country_id": overlord_country_id},
+        )
         if record is None:
             record = IcpdProxy(
                 country_id=country.country_id,
@@ -115,13 +118,22 @@ class IcpdProxyService:
 
         record.country_code = country.country_code.upper()
         record.country_name_snapshot = country.country_name
-        record.overlord_country_id = overlord_country_id
         record.overlord_country_name_snapshot = overlord_country_name
         return record
 
-    async def remove(self, country_id: str) -> bool:
-        result = await self.session.execute(delete(IcpdProxy).where(IcpdProxy.country_id == country_id))
+    async def remove(self, country_id: str, overlord_country_id: str | None = None) -> bool:
+        statement = delete(IcpdProxy).where(IcpdProxy.country_id == country_id)
+        if overlord_country_id is not None:
+            statement = statement.where(IcpdProxy.overlord_country_id == overlord_country_id)
+        result = await self.session.execute(statement)
         return result.rowcount > 0
 
     async def list_all(self) -> list[IcpdProxy]:
-        return list(await self.session.scalars(select(IcpdProxy).order_by(IcpdProxy.country_name_snapshot)))
+        return list(
+            await self.session.scalars(
+                select(IcpdProxy).order_by(
+                    IcpdProxy.country_name_snapshot,
+                    IcpdProxy.overlord_country_name_snapshot,
+                )
+            )
+        )

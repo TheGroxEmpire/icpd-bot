@@ -4,9 +4,8 @@ import discord
 from discord import app_commands
 from sqlalchemy import or_, select
 
-from icpd_bot.commands.country_management import require_council
 from icpd_bot.db.models import GuildConfig, LocationRecommendation, WareraCountryCache, WareraRegionCache
-from icpd_bot.services.permissions import member_is_admin
+from icpd_bot.services.permissions import require_council_access, require_read_only_access
 from icpd_bot.services.recommendations import RecommendationService
 from icpd_bot.views.recommended_regions import build_recommended_regions_embed
 
@@ -78,7 +77,11 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         location_identifier: str,
         note: str | None = None,
     ) -> None:
-        if not await require_council(interaction, bot.settings.council_role_id):
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -128,6 +131,13 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         description="Show the current recommended locations embed from cached data.",
     )
     async def show_recommended_regions(interaction: discord.Interaction) -> None:
+        if not await require_read_only_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+            session_factory=bot.session_factory,
+        ):
+            return
         await interaction.response.defer(ephemeral=True)
         async with bot.session_factory.session() as session:
             entries = await RecommendationService(session).build_recommendations(bot.settings.discord_guild_id)
@@ -141,11 +151,11 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         interaction: discord.Interaction,
         refresh_interval_minutes: int | None = None,
     ) -> None:
-        if not member_is_admin(interaction):
-            await interaction.response.send_message(
-                "This command requires Discord administrator permission.",
-                ephemeral=True,
-            )
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
             return
         await interaction.response.defer(ephemeral=True)
         interval = refresh_interval_minutes or bot.settings.recommended_region_refresh_minutes
@@ -174,11 +184,11 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         description="Refresh tracked recommended-region embeds now.",
     )
     async def refresh_list_recommended_region(interaction: discord.Interaction) -> None:
-        if not member_is_admin(interaction):
-            await interaction.response.send_message(
-                "This command requires Discord administrator permission.",
-                ephemeral=True,
-            )
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
             return
         await interaction.response.defer(ephemeral=True)
         refreshed = await bot.refresh_due_embeds(force_all=True)
@@ -189,11 +199,11 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         description="Stop refreshing a managed recommended-region embed by message ID.",
     )
     async def stop_list_recommended_region(interaction: discord.Interaction, message_id: str) -> None:
-        if not member_is_admin(interaction):
-            await interaction.response.send_message(
-                "This command requires Discord administrator permission.",
-                ephemeral=True,
-            )
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
             return
         try:
             normalized_message_id = int(message_id)

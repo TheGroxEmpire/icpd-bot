@@ -5,6 +5,7 @@ from discord import app_commands
 from sqlalchemy import select
 
 from icpd_bot.db.models import ActiveRegionList, GuildConfig, SyncState
+from icpd_bot.services.permissions import require_read_only_access
 
 if TYPE_CHECKING:
     from icpd_bot.bot.app import ICPDBot
@@ -13,6 +14,13 @@ if TYPE_CHECKING:
 def build_status_command(bot: "ICPDBot") -> app_commands.Command:
     @app_commands.command(name="bot_status", description="Show bot configuration and cache status.")
     async def bot_status(interaction: discord.Interaction) -> None:
+        if not await require_read_only_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+            session_factory=bot.session_factory,
+        ):
+            return
         async with bot.session_factory.session() as session:
             sync_state = await session.get(SyncState, "warera_sync")
             guild_config = await session.get(GuildConfig, bot.settings.discord_guild_id)

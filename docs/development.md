@@ -236,3 +236,9 @@ As the project evolves, update docs when any of these change:
 - required environment variables
 
 The goal is for this repository to remain buildable by another developer without tribal knowledge.
+
+Primary docs:
+
+- `docs/commands.md`: live slash-command reference, arguments, permissions, and response behavior
+- `docs/architecture.md`: system design and policy behavior
+- `docs/roadmap.md`: delivery status by phase

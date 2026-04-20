@@ -4,22 +4,10 @@ import discord
 from discord import app_commands
 
 from icpd_bot.services.guild_config import GuildConfigService
-from icpd_bot.services.permissions import member_is_admin
+from icpd_bot.services.permissions import require_council_access
 
 if TYPE_CHECKING:
     from icpd_bot.bot.app import ICPDBot
-
-
-async def require_admin(interaction: discord.Interaction) -> bool:
-    if member_is_admin(interaction):
-        return True
-
-    message = "This command requires Discord administrator permission."
-    if interaction.response.is_done():
-        await interaction.followup.send(message, ephemeral=True)
-    else:
-        await interaction.response.send_message(message, ephemeral=True)
-    return False
 
 
 def build_admin_config_commands(bot: "ICPDBot") -> list[app_commands.Command]:
@@ -31,7 +19,11 @@ def build_admin_config_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         interaction: discord.Interaction,
         channel_id: str,
     ) -> None:
-        if not await require_admin(interaction):
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
             return
 
         try:
@@ -58,6 +50,12 @@ def build_admin_config_commands(bot: "ICPDBot") -> list[app_commands.Command]:
                 ephemeral=True,
             )
             return
+        if channel.guild.id != bot.settings.discord_guild_id:
+            await interaction.response.send_message(
+                "The alert channel must be inside the configured ICPD server.",
+                ephemeral=True,
+            )
+            return
 
         async with bot.session_factory.session() as session:
             service = GuildConfigService(session)
@@ -73,7 +71,11 @@ def build_admin_config_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         description="Clear the shared alert channel setting.",
     )
     async def clear_alert_channel(interaction: discord.Interaction) -> None:
-        if not await require_admin(interaction):
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
             return
 
         async with bot.session_factory.session() as session:

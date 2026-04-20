@@ -4,21 +4,21 @@ Private Discord bot for ICPD operations in Warera.
 
 This repository contains a Python-based Discord bot that:
 
-- handles slash commands for ICPD staff and Discord admins
+- handles slash commands for ICPD Council members and approved read-only roles
 - manages sanctioned countries, ICPD countries, and ICPD proxy countries
 - caches Warera data locally so the bot can respond even if the upstream API is slow
 - syncs Warera country, region, and party data on a schedule
 - publishes and refreshes a recommended-region embed on a schedule
 - sends recommendation-change and specialization alerts to a shared channel
-- can be invited to more than one Discord server when alerts or public embeds need to live outside the main ICPD guild
+- only responds inside the configured Discord guild from `DISCORD_GUILD_ID`
 
 ## Product Goals
 
 - Use Discord slash commands as the primary interface
-- Restrict sensitive commands to ICPD Council members
-- Allow Discord admins to start and manage public informational embeds
+- Restrict all bot commands to ICPD Council or approved read-only roles
+- Give ICPD Council full bot access and let Council manage the read-only access role list
 - Keep recommendations fast by reading from local cache instead of the Warera API at request time
-- allow the bot to exist in multiple Discord servers while keeping one primary ICPD control guild for v1
+- anchor bot usage to one configured ICPD control guild
 - Run the full stack with Docker Compose
 
 ## Proposed Stack
@@ -57,26 +57,26 @@ Important design rule:
 
 - `/add_sanctioned_country`
 - `/remove_sanctioned_country`
-- `/list_sanctioned_countries`
 - `/add_icpd_country`
 - `/remove_icpd_country`
-- `/list_icpd_countries`
 - `/add_icpd_proxy`
 - `/remove_icpd_proxy`
-- `/list_icpd_proxies`
 - `/set_location_recommendation`
-
-### Admin commands
-
 - `/sync_warera_cache`
 - `/start_list_recommended_region`
 - `/stop_list_recommended_region`
 - `/refresh_list_recommended_region`
 - `/set_alert_channel`
 - `/clear_alert_channel`
+- `/add_read_only_role`
+- `/remove_read_only_role`
+- `/list_read_only_roles`
 
-### Public or read-only commands
+### Read-only role or council commands
 
+- `/list_sanctioned_countries`
+- `/list_icpd_countries`
+- `/list_icpd_proxies`
 - `/show_recommended_regions`
 - `/bot_status`
 
@@ -130,6 +130,7 @@ It will:
 
 ## Documents
 
+- [Command Reference](docs/commands.md)
 - [Architecture](docs/architecture.md)
 - [Development Guide](docs/development.md)
 - [Roadmap](docs/roadmap.md)

@@ -12,7 +12,7 @@ It has three main responsibilities:
 
 The bot should not depend on live Warera responses during normal command execution. Instead, a scheduled sync process refreshes cached country and region data, and command handlers read from that cache.
 
-The bot may be present in multiple Discord servers. In v1, one configured ICPD guild remains the home guild for command and policy management, while alerts or managed outputs may be delivered in other servers the bot has joined.
+The bot is anchored to one configured ICPD guild. Commands only work inside the Discord server whose ID matches `DISCORD_GUILD_ID`, even if the bot account is present in other servers.
 
 ## System Context
 
@@ -50,7 +50,7 @@ Responsibilities:
 
 - verify the command is used in the configured home guild when the command is home-guild only
 - verify whether the member has the ICPD Council role
-- verify whether the member has the required Discord admin permission
+- verify whether the member has a council-approved read-only access role for read-only commands
 
 Permission checks should run both at command registration time where possible and at runtime for safety.
 
@@ -109,6 +109,16 @@ Responsibilities:
 - suppress duplicate alerts across refresh cycles
 
 This layer turns cached state changes into actionable Discord notifications.
+
+## Command Surface
+
+The live slash-command reference is maintained in [commands.md](commands.md).
+
+Current command groups:
+
+- read-only access: `/bot_status`, `/show_recommended_regions`, and the country/proxy list commands
+- council-managed country data: sanctioned countries, ICPD countries, ICPD proxies, read-only access roles, and manual location recommendations
+- council operations: cache sync, alert-channel configuration, and managed recommendation embed lifecycle
 
 ## Data Flow
 
@@ -202,6 +212,11 @@ PostgreSQL is used for both persistent configuration and cached game data.
 - optional admin channel IDs
 - optional shared alert channel ID for both recommendation and specialization alerts
 
+#### `guild_read_only_roles`
+
+- Discord guild ID
+- Discord role ID allowed to use read-only commands
+
 #### `sanctioned_countries`
 
 - country ID
@@ -227,6 +242,7 @@ PostgreSQL is used for both persistent configuration and cached game data.
 - country name snapshot
 - overlord country ID (linked to `icpd_countries`)
 - overlord country name snapshot
+- one row per proxy-to-overlord relationship so joint proxies can have more than one ICPD overlord
 - created by
 - created at
 

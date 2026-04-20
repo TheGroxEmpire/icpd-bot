@@ -1,7 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from icpd_bot.db.models import GuildConfig
+from icpd_bot.db.models import GuildConfig, GuildReadOnlyRole
 
 
 class GuildConfigService:
@@ -36,3 +36,28 @@ class GuildConfigService:
             raise ValueError(f"Guild config {guild_id} does not exist.")
         config.alert_channel_id = channel_id
         return config
+
+    async def list_read_only_roles(self, guild_id: int) -> list[GuildReadOnlyRole]:
+        return list(
+            await self.session.scalars(
+                select(GuildReadOnlyRole)
+                .where(GuildReadOnlyRole.guild_id == guild_id)
+                .order_by(GuildReadOnlyRole.role_id)
+            )
+        )
+
+    async def add_read_only_role(self, guild_id: int, role_id: int) -> GuildReadOnlyRole:
+        record = await self.session.get(GuildReadOnlyRole, {"guild_id": guild_id, "role_id": role_id})
+        if record is not None:
+            return record
+
+        record = GuildReadOnlyRole(guild_id=guild_id, role_id=role_id)
+        self.session.add(record)
+        return record
+
+    async def remove_read_only_role(self, guild_id: int, role_id: int) -> bool:
+        record = await self.session.get(GuildReadOnlyRole, {"guild_id": guild_id, "role_id": role_id})
+        if record is None:
+            return False
+        await self.session.delete(record)
+        return True

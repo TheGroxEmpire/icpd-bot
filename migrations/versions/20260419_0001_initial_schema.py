@@ -54,7 +54,7 @@ def upgrade() -> None:
         sa.Column("created_by", sa.BigInteger(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["overlord_country_id"], ["icpd_countries.country_id"], ondelete="RESTRICT"),
-        sa.PrimaryKeyConstraint("country_id"),
+        sa.PrimaryKeyConstraint("country_id", "overlord_country_id"),
     )
     op.create_index("ix_icpd_proxies_country_code", "icpd_proxies", ["country_code"])
 

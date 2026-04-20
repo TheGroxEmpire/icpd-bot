@@ -86,7 +86,7 @@ def status_badge(status: str) -> str:
         "cooperator": "🟪 Cooperator",
         "occupied": "🟥 Occupied",
         "manual": "🟨 Council",
-    }.get(status, "⬜ Other")
+    }.get(status, "⬜ No special status")
 
 
 def build_recommended_regions_embed(entries: list[RecommendationEntry]) -> discord.Embed:
