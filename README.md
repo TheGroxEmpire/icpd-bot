@@ -60,8 +60,11 @@ Important design rule:
 - `/add_icpd_country`
 - `/remove_icpd_country`
 - `/add_icpd_proxy`
+- `/add_cooperator_country`
+- `/remove_cooperator_country`
 - `/remove_icpd_proxy`
 - `/set_location_recommendation`
+- `/remove_location_recommendation`
 - `/sync_warera_cache`
 - `/start_list_recommended_region`
 - `/stop_list_recommended_region`
@@ -76,6 +79,7 @@ Important design rule:
 
 - `/list_sanctioned_countries`
 - `/list_icpd_countries`
+- `/list_cooperator_countries`
 - `/list_icpd_proxies`
 - `/show_recommended_regions`
 - `/bot_status`

@@ -89,14 +89,25 @@ def status_badge(status: str) -> str:
     }.get(status, "⬜ No special status")
 
 
+def status_badges(statuses: tuple[str, ...]) -> str:
+    return " ".join(status_badge(status) for status in statuses)
+
+
 def build_recommended_regions_embed(entries: list[RecommendationEntry]) -> discord.Embed:
     embed = discord.Embed(
         title="Recommended Item Locations",
-        description="Current cached recommendations for detected Warera items.",
+        description=(
+            "Current high-signal recommendations only: council overrides, sanction-driven "
+            "fallbacks, and occupied territory for ICPD-aligned specialists."
+        ),
         timestamp=datetime.now(timezone.utc),
     )
     if not entries:
-        embed.add_field(name="No data", value="Run a cache sync first.", inline=False)
+        embed.add_field(
+            name="No data",
+            value="No council, sanction, or ICPD-aligned occupied recommendations are currently available.",
+            inline=False,
+        )
         return embed
 
     # Use two wide text columns so we can show many items without hitting the
@@ -109,7 +120,17 @@ def build_recommended_regions_embed(entries: list[RecommendationEntry]) -> disco
         country_href = country_link(entry.country_id)
         if country_href:
             country_label = f"[{country_label}]({country_href})"
-        extra_lines = [status_badge(entry.ownership_status)]
+        source_label = None
+        if entry.source_country_name:
+            source_flag = country_flag(entry.source_country_code)
+            source_country_label = f"{source_flag} {entry.source_country_name}".strip()
+            source_href = country_link(entry.source_country_id)
+            if source_href:
+                source_country_label = f"[{source_country_label}]({source_href})"
+            source_label = f"From: {source_country_label}"
+        extra_lines = [status_badges(entry.ownership_statuses)]
+        if source_label:
+            extra_lines.append(source_label)
         if entry.production_bonus_percent is not None:
             extra_lines.append(f"Bonus: {entry.production_bonus_percent:.2f}%")
         else:

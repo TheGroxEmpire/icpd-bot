@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from sqlalchemy import Select, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from icpd_bot.db.models import IcpdCountry, IcpdProxy, SanctionedCountry
+from icpd_bot.db.models import CooperatorCountry, IcpdCountry, IcpdProxy, SanctionedCountry
 
 
 @dataclass(slots=True)
@@ -87,6 +87,34 @@ class IcpdCountryService:
 
     async def list_all(self) -> list[IcpdCountry]:
         return list(await self.session.scalars(select(IcpdCountry).order_by(IcpdCountry.country_name_snapshot)))
+
+
+class CooperatorCountryService:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def upsert(self, country: CountryInput) -> CooperatorCountry:
+        record = await self.session.get(CooperatorCountry, country.country_id)
+        if record is None:
+            record = CooperatorCountry(
+                country_id=country.country_id,
+                country_code=country.country_code.upper(),
+                country_name_snapshot=country.country_name,
+                created_by=country.actor_id,
+            )
+            self.session.add(record)
+            return record
+
+        record.country_code = country.country_code.upper()
+        record.country_name_snapshot = country.country_name
+        return record
+
+    async def remove(self, country_id: str) -> bool:
+        result = await self.session.execute(delete(CooperatorCountry).where(CooperatorCountry.country_id == country_id))
+        return result.rowcount > 0
+
+    async def list_all(self) -> list[CooperatorCountry]:
+        return list(await self.session.scalars(select(CooperatorCountry).order_by(CooperatorCountry.country_name_snapshot)))
 
 
 class IcpdProxyService:

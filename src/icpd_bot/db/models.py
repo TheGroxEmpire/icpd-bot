@@ -50,6 +50,15 @@ class IcpdCountry(Base, TimestampMixin):
     created_by: Mapped[int] = mapped_column(BigInteger)
 
 
+class CooperatorCountry(Base, TimestampMixin):
+    __tablename__ = "cooperator_countries"
+
+    country_id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    country_code: Mapped[str] = mapped_column(String(32), index=True)
+    country_name_snapshot: Mapped[str] = mapped_column(String(255))
+    created_by: Mapped[int] = mapped_column(BigInteger)
+
+
 class IcpdProxy(Base, TimestampMixin):
     __tablename__ = "icpd_proxies"
 

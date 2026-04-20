@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from icpd_bot.db.models import (
+    CooperatorCountry,
     IcpdCountry,
     IcpdProxy,
     LocationRecommendation,
@@ -28,7 +29,10 @@ class RecommendationEntry:
     country_id: str | None
     country_name: str
     country_code: str | None
-    ownership_status: str
+    source_country_id: str | None
+    source_country_name: str | None
+    source_country_code: str | None
+    ownership_statuses: tuple[str, ...]
     production_bonus_percent: float | None
     resistance_display: str | None
     development: float | None
@@ -58,6 +62,7 @@ class RecommendationService:
         regions = list(await self.session.scalars(select(WareraRegionCache)))
         sanctions = list(await self.session.scalars(select(SanctionedCountry)))
         proxies = list(await self.session.scalars(select(IcpdProxy)))
+        cooperators = list(await self.session.scalars(select(CooperatorCountry)))
         manual = list(
             await self.session.scalars(
                 select(LocationRecommendation)
@@ -70,6 +75,7 @@ class RecommendationService:
         parties_by_id = {party.party_id: party for party in parties}
         sanctions_by_id = {country.country_id: country for country in sanctions}
         proxy_country_ids = {proxy.country_id for proxy in proxies}
+        cooperator_country_ids = {country.country_id for country in cooperators}
         icpd_country_ids = {country.country_id for country in await self.session.scalars(select(IcpdCountry))}
         manual_by_good: dict[str, LocationRecommendation] = {}
         for record in manual:
@@ -93,7 +99,10 @@ class RecommendationService:
                         country_id=None,
                         country_name="Council override",
                         country_code=None,
-                        ownership_status="manual",
+                        source_country_id=None,
+                        source_country_name=None,
+                        source_country_code=None,
+                        ownership_statuses=("manual",),
                         production_bonus_percent=None,
                         resistance_display=None,
                         development=None,
@@ -109,6 +118,7 @@ class RecommendationService:
                 countries_by_id=countries_by_id,
                 sanctions_by_id=sanctions_by_id,
                 icpd_country_ids=icpd_country_ids,
+                cooperator_country_ids=cooperator_country_ids,
                 proxy_country_ids=proxy_country_ids,
             )
             eligible_regions = [
@@ -126,59 +136,64 @@ class RecommendationService:
             if not eligible_regions:
                 continue
 
-            scored_regions = [
-                (
-                    region,
-                    countries_by_id.get(region.country_id),
-                    self._total_production_bonus_percent(
-                        country=countries_by_id.get(region.country_id),
-                        region=region,
-                        party=parties_by_id.get(self._ruling_party_id(countries_by_id.get(region.country_id))),
-                        specialization=good_type,
-                    ),
+            scored_regions = []
+            for region in eligible_regions:
+                country = countries_by_id.get(region.country_id)
+                production_bonus_percent = self._total_production_bonus_percent(
+                    country=country,
+                    region=region,
+                    party=parties_by_id.get(self._ruling_party_id(country)),
+                    specialization=good_type,
                 )
-                for region in eligible_regions
-            ]
+                source_country = countries_by_id.get(region.initial_country_id) if (
+                    region.initial_country_id and region.initial_country_id != region.country_id
+                ) else None
+                current_sanction = sanctions_by_id.get(region.country_id)
+                source_sanction = sanctions_by_id.get(region.initial_country_id) if region.initial_country_id else None
+                should_include, note = self._recommendation_visibility(
+                    good_type=good_type,
+                    region=region,
+                    country=country,
+                    current_sanction=current_sanction,
+                    source_country=source_country,
+                    source_sanction=source_sanction,
+                    icpd_country_ids=icpd_country_ids,
+                    cooperator_country_ids=cooperator_country_ids,
+                    proxy_country_ids=proxy_country_ids,
+                )
+                if not should_include:
+                    continue
+                if production_bonus_percent <= 0.0:
+                    continue
+                scored_regions.append(
+                    (
+                        region,
+                        country,
+                        production_bonus_percent,
+                        source_country,
+                        note,
+                    )
+                )
+            if not scored_regions:
+                continue
             best_region = max(
                 scored_regions,
-                key=lambda scored: (
+                key=lambda scored: self._recommendation_sort_key(
+                    scored[0],
                     scored[2],
-                    scored[0].development or 0.0,
-                    scored[0].name,
+                    icpd_country_ids=icpd_country_ids,
+                    cooperator_country_ids=cooperator_country_ids,
+                    proxy_country_ids=proxy_country_ids,
                 ),
             )
-            region, country, production_bonus_percent = best_region
-            ownership_status = self._ownership_status(
+            region, country, production_bonus_percent, sanctioned_source_country, note = best_region
+            ownership_statuses = self._ownership_statuses(
                 region=region,
                 icpd_country_ids=icpd_country_ids,
                 proxy_country_ids=proxy_country_ids,
+                cooperator_country_ids=cooperator_country_ids,
             )
             resistance_display = self._resistance_display(region)
-            sanctioned_source_country = countries_by_id.get(region.initial_country_id) if (
-                region.initial_country_id and region.initial_country_id != region.country_id
-            ) else None
-            source_sanction = sanctions_by_id.get(region.initial_country_id) if region.initial_country_id else None
-            if (
-                sanctioned_source_country is not None
-                and sanctioned_source_country.production_specialization == good_type
-                and source_sanction is not None
-                and source_sanction.sanction_level == "limited"
-            ):
-                if self._is_icpd_aligned_country(
-                    region.country_id,
-                    icpd_country_ids=icpd_country_ids,
-                    proxy_country_ids=proxy_country_ids,
-                ):
-                    note = f"ICPD-aligned occupied territory in limited-sanction {sanctioned_source_country.name}."
-                else:
-                    note = (
-                        f"Highest-resistance occupied territory in limited-sanction "
-                        f"{sanctioned_source_country.name}."
-                    )
-            elif country and country.production_specialization == good_type:
-                note = f"Country specialization match in {country.name}."
-            else:
-                note = "Best eligible cached region."
             results.append(
                 RecommendationEntry(
                     good_type=good_type,
@@ -188,7 +203,10 @@ class RecommendationService:
                     country_id=region.country_id,
                     country_name=country.name if country else region.country_id,
                     country_code=country.code if country else None,
-                    ownership_status=ownership_status,
+                    source_country_id=sanctioned_source_country.country_id if sanctioned_source_country else None,
+                    source_country_name=sanctioned_source_country.name if sanctioned_source_country else None,
+                    source_country_code=sanctioned_source_country.code if sanctioned_source_country else None,
+                    ownership_statuses=ownership_statuses,
                     production_bonus_percent=production_bonus_percent,
                     resistance_display=resistance_display,
                     development=region.development,
@@ -208,12 +226,17 @@ class RecommendationService:
         countries_by_id: dict[str, WareraCountryCache],
         sanctions_by_id: dict[str, SanctionedCountry],
         icpd_country_ids: set[str],
+        cooperator_country_ids: set[str],
         proxy_country_ids: set[str],
     ) -> list[WareraRegionCache]:
+        normalized_good_type = cls._resolve_material_id(good_type)
+        if not normalized_good_type:
+            return []
+
         limited_sanction_country_ids = {
             country_id
             for country_id, country in countries_by_id.items()
-            if country.production_specialization == good_type
+            if cls._resolve_material_id(country.production_specialization) == normalized_good_type
             and sanctions_by_id.get(country_id) is not None
             and sanctions_by_id[country_id].sanction_level == "limited"
         }
@@ -222,6 +245,7 @@ class RecommendationService:
                 country_id=country_id,
                 regions=regions,
                 icpd_country_ids=icpd_country_ids,
+                cooperator_country_ids=cooperator_country_ids,
                 proxy_country_ids=proxy_country_ids,
             )
             for country_id in limited_sanction_country_ids
@@ -231,20 +255,159 @@ class RecommendationService:
             for country_id, fallback_regions in limited_sanction_fallbacks.items()
             if fallback_regions
         }
+        aligned_specialist_country_ids = {
+            country_id
+            for country_id, country in countries_by_id.items()
+            if cls._resolve_material_id(country.production_specialization) == normalized_good_type
+            and cls._is_icpd_aligned_country(
+                country_id,
+                icpd_country_ids=icpd_country_ids,
+                proxy_country_ids=proxy_country_ids,
+            )
+        }
+        aligned_specialist_fallbacks = {
+            country_id: cls._aligned_specialist_occupied_regions(
+                country_id=country_id,
+                regions=regions,
+            )
+            for country_id in aligned_specialist_country_ids
+        }
+        fallback_country_ids.update(
+            country_id
+            for country_id, fallback_regions in aligned_specialist_fallbacks.items()
+            if fallback_regions
+        )
 
         candidates_by_id: dict[str, WareraRegionCache] = {
             region.region_id: region
             for region in regions
-            if countries_by_id.get(region.country_id) is not None
-            and countries_by_id[region.country_id].production_specialization == good_type
-            and region.country_id not in fallback_country_ids
+            if (
+                countries_by_id.get(region.country_id) is not None
+                and (
+                    cls._resolve_material_id(countries_by_id[region.country_id].production_specialization)
+                    == normalized_good_type
+                    or cls._region_matches_good(region, normalized_good_type)
+                )
+                and region.country_id not in fallback_country_ids
+            )
         }
 
         for fallback_regions in limited_sanction_fallbacks.values():
             for region in fallback_regions:
                 candidates_by_id.setdefault(region.region_id, region)
+        for fallback_regions in aligned_specialist_fallbacks.values():
+            for region in fallback_regions:
+                candidates_by_id.setdefault(region.region_id, region)
 
         return list(candidates_by_id.values())
+
+    @classmethod
+    def _recommendation_sort_key(
+        cls,
+        region: WareraRegionCache,
+        production_bonus_percent: float,
+        *,
+        icpd_country_ids: set[str],
+        cooperator_country_ids: set[str],
+        proxy_country_ids: set[str],
+    ) -> tuple[float, int, float, int, float, str]:
+        if region.initial_country_id and region.initial_country_id != region.country_id:
+            resistance_ratio, resistance_value, development_value, name = cls._occupied_region_priority_key(region)
+            alignment_priority = cls._alignment_priority(
+                region.initial_country_id,
+                icpd_country_ids=icpd_country_ids,
+                cooperator_country_ids=cooperator_country_ids,
+                proxy_country_ids=proxy_country_ids,
+            )
+            return (
+                production_bonus_percent,
+                alignment_priority,
+                resistance_ratio,
+                resistance_value,
+                development_value,
+                name,
+            )
+        return (
+            production_bonus_percent,
+            -1,
+            -1.0,
+            -1,
+            region.development or 0.0,
+            region.name,
+        )
+
+    @classmethod
+    def _recommendation_visibility(
+        cls,
+        *,
+        good_type: str,
+        region: WareraRegionCache,
+        country: WareraCountryCache | None,
+        current_sanction: SanctionedCountry | None,
+        source_country: WareraCountryCache | None,
+        source_sanction: SanctionedCountry | None,
+        icpd_country_ids: set[str],
+        cooperator_country_ids: set[str],
+        proxy_country_ids: set[str],
+    ) -> tuple[bool, str]:
+        if (
+            current_sanction is not None
+            and current_sanction.sanction_level == "limited"
+            and region.initial_country_id is not None
+            and region.initial_country_id != region.country_id
+            and country is not None
+            and cls._resolve_material_id(country.production_specialization) == cls._resolve_material_id(good_type)
+        ):
+            source_status = cls._country_alignment_status(
+                region.initial_country_id,
+                icpd_country_ids=icpd_country_ids,
+                cooperator_country_ids=cooperator_country_ids,
+                proxy_country_ids=proxy_country_ids,
+            )
+            if source_status is not None:
+                source_name = source_country.name if source_country else "an ICPD-aligned country"
+                return True, (
+                    f"{cls._alignment_display_name(source_status)} occupied territory used for "
+                    f"limited-sanction {country.name if country else region.country_id} via {source_name}."
+                )
+            return True, f"Highest-resistance occupied territory in limited-sanction {country.name if country else region.country_id}."
+        if (
+            source_country is not None
+            and cls._resolve_material_id(source_country.production_specialization) == cls._resolve_material_id(good_type)
+            and source_sanction is not None
+            and source_sanction.sanction_level == "limited"
+        ):
+            if cls._is_icpd_aligned_country(
+                region.country_id,
+                icpd_country_ids=icpd_country_ids,
+                proxy_country_ids=proxy_country_ids,
+            ):
+                return True, f"ICPD-aligned occupied territory in limited-sanction {source_country.name}."
+            return True, f"Highest-resistance occupied territory in limited-sanction {source_country.name}."
+        if (
+            source_country is not None
+            and region.initial_country_id != region.country_id
+            and cls._is_icpd_aligned_country(
+                source_country.country_id,
+                icpd_country_ids=icpd_country_ids,
+                proxy_country_ids=proxy_country_ids,
+            )
+        ):
+            return True, f"Occupied territory of ICPD-aligned country {source_country.name}."
+        if country and country.production_specialization == good_type:
+            return False, f"Country specialization match in {country.name}."
+        return False, "Best eligible cached region."
+
+    @classmethod
+    def _region_matches_good(cls, region: WareraRegionCache, good_type: str) -> bool:
+        payload = cls._load_payload(region.raw_payload)
+        if not payload:
+            return False
+        deposit = payload.get("deposit")
+        if not isinstance(deposit, dict):
+            return False
+        deposit_item = cls._resolve_material_id(deposit.get("type"))
+        return deposit_item == good_type and cls._is_deposit_active(deposit)
 
     @classmethod
     def _limited_sanction_occupied_regions(
@@ -253,29 +416,66 @@ class RecommendationService:
         country_id: str,
         regions: Iterable[WareraRegionCache],
         icpd_country_ids: set[str],
+        cooperator_country_ids: set[str],
         proxy_country_ids: set[str],
     ) -> list[WareraRegionCache]:
         occupied_regions = [
             region
             for region in regions
-            if region.initial_country_id == country_id and region.country_id != country_id
+            if region.country_id == country_id
+            and region.initial_country_id is not None
+            and region.initial_country_id != country_id
         ]
         if not occupied_regions:
             return []
 
-        icpd_aligned_regions = [
+        aligned_regions = [
             region
             for region in occupied_regions
-            if cls._is_icpd_aligned_country(
-                region.country_id,
+            if cls._country_alignment_status(
+                region.initial_country_id,
                 icpd_country_ids=icpd_country_ids,
+                cooperator_country_ids=cooperator_country_ids,
                 proxy_country_ids=proxy_country_ids,
             )
+            is not None
         ]
-        if icpd_aligned_regions:
-            return icpd_aligned_regions
+        if aligned_regions:
+            best_alignment_priority = max(
+                cls._alignment_priority(
+                    region.initial_country_id,
+                    icpd_country_ids=icpd_country_ids,
+                    cooperator_country_ids=cooperator_country_ids,
+                    proxy_country_ids=proxy_country_ids,
+                )
+                for region in aligned_regions
+            )
+            return [
+                region
+                for region in aligned_regions
+                if cls._alignment_priority(
+                    region.initial_country_id,
+                    icpd_country_ids=icpd_country_ids,
+                    cooperator_country_ids=cooperator_country_ids,
+                    proxy_country_ids=proxy_country_ids,
+                )
+                == best_alignment_priority
+            ]
 
         return [max(occupied_regions, key=cls._occupied_region_priority_key)]
+
+    @staticmethod
+    def _aligned_specialist_occupied_regions(
+        *,
+        country_id: str,
+        regions: Iterable[WareraRegionCache],
+    ) -> list[WareraRegionCache]:
+        return [
+            region
+            for region in regions
+            if region.initial_country_id == country_id
+            and region.country_id != country_id
+        ]
 
     @classmethod
     def _is_region_eligible(
@@ -299,27 +499,6 @@ class RecommendationService:
         initial_sanction = sanctions_by_id.get(initial_country_id)
         if initial_sanction is not None and initial_sanction.sanction_level == "full":
             return False
-
-        initial_is_icpd_aligned = cls._is_icpd_aligned_country(
-            initial_country_id,
-            icpd_country_ids=icpd_country_ids,
-            proxy_country_ids=proxy_country_ids,
-        )
-        current_is_icpd_aligned = cls._is_icpd_aligned_country(
-            region.country_id,
-            icpd_country_ids=icpd_country_ids,
-            proxy_country_ids=proxy_country_ids,
-        )
-        if (
-            initial_is_icpd_aligned
-            and not current_is_icpd_aligned
-            and current_sanction is not None
-            and current_sanction.sanction_level == "limited"
-        ):
-            occupier_country = countries_by_id.get(region.country_id)
-            occupier_party = parties_by_id.get(cls._ruling_party_id(occupier_country))
-            if cls._country_has_best_civilization(occupier_country) and cls._party_has_eco_ethics(occupier_party):
-                return False
 
         return True
 
@@ -347,21 +526,78 @@ class RecommendationService:
         )
 
     @staticmethod
-    def _ownership_status(
+    def _ownership_statuses(
         *,
         region: WareraRegionCache,
         icpd_country_ids: set[str],
         proxy_country_ids: set[str],
-    ) -> str:
-        if region.country_id in icpd_country_ids:
-            return "icpd"
-        if region.country_id in proxy_country_ids:
-            return "proxy"
+        cooperator_country_ids: set[str],
+    ) -> tuple[str, ...]:
+        statuses: list[str] = []
+
+        current_alignment = RecommendationService._country_alignment_status(
+            region.country_id,
+            icpd_country_ids=icpd_country_ids,
+            proxy_country_ids=proxy_country_ids,
+            cooperator_country_ids=cooperator_country_ids,
+        )
+        if current_alignment:
+            statuses.append(current_alignment)
+
         if region.initial_country_id and region.initial_country_id != region.country_id:
-            if region.initial_country_id in proxy_country_ids:
-                return "cooperator"
-            return "occupied"
-        return "other"
+            source_alignment = RecommendationService._country_alignment_status(
+                region.initial_country_id,
+                icpd_country_ids=icpd_country_ids,
+                proxy_country_ids=proxy_country_ids,
+                cooperator_country_ids=cooperator_country_ids,
+            )
+            if source_alignment and source_alignment not in statuses:
+                statuses.append(source_alignment)
+            statuses.append("occupied")
+
+        if statuses:
+            return tuple(statuses)
+        return ("other",)
+
+    @staticmethod
+    def _country_alignment_status(
+        country_id: str | None,
+        *,
+        icpd_country_ids: set[str],
+        cooperator_country_ids: set[str],
+        proxy_country_ids: set[str],
+    ) -> str | None:
+        if country_id in icpd_country_ids:
+            return "icpd"
+        if country_id in cooperator_country_ids:
+            return "cooperator"
+        if country_id in proxy_country_ids:
+            return "proxy"
+        return None
+
+    @staticmethod
+    def _alignment_priority(
+        country_id: str | None,
+        *,
+        icpd_country_ids: set[str],
+        cooperator_country_ids: set[str],
+        proxy_country_ids: set[str],
+    ) -> int:
+        status = RecommendationService._country_alignment_status(
+            country_id,
+            icpd_country_ids=icpd_country_ids,
+            cooperator_country_ids=cooperator_country_ids,
+            proxy_country_ids=proxy_country_ids,
+        )
+        return {"icpd": 3, "cooperator": 2, "proxy": 1}.get(status, 0)
+
+    @staticmethod
+    def _alignment_display_name(status: str) -> str:
+        return {
+            "icpd": "ICPD",
+            "cooperator": "Cooperator",
+            "proxy": "Proxy",
+        }.get(status, "Aligned")
 
     @staticmethod
     def _resistance_display(region: WareraRegionCache) -> str | None:

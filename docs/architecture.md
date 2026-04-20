@@ -117,7 +117,7 @@ The live slash-command reference is maintained in [commands.md](commands.md).
 Current command groups:
 
 - read-only access: `/bot_status`, `/show_recommended_regions`, and the country/proxy list commands
-- council-managed country data: sanctioned countries, ICPD countries, ICPD proxies, read-only access roles, and manual location recommendations
+- council-managed country data: sanctioned countries, ICPD countries, cooperator countries, ICPD proxies, read-only access roles, and manual location recommendations
 - council operations: cache sync, alert-channel configuration, and managed recommendation embed lifecycle
 
 ## Data Flow
@@ -228,6 +228,14 @@ PostgreSQL is used for both persistent configuration and cached game data.
 - created at
 
 #### `icpd_countries`
+
+- country ID
+- country code
+- country name snapshot
+- created by
+- created at
+
+#### `cooperator_countries`
 
 - country ID
 - country code

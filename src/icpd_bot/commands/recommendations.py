@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 
 from icpd_bot.db.models import GuildConfig, LocationRecommendation, WareraCountryCache, WareraRegionCache
 from icpd_bot.services.permissions import require_council_access, require_read_only_access
@@ -127,6 +127,55 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         await interaction.followup.send("Recommendation stored and embeds refreshed.", ephemeral=True)
 
     @app_commands.command(
+        name="remove_location_recommendation",
+        description="Remove council recommendation overrides for a specific good.",
+    )
+    @app_commands.autocomplete(good_type=autocomplete_goods)
+    async def remove_location_recommendation(
+        interaction: discord.Interaction,
+        good_type: str,
+    ) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        normalized_good_type = good_type.strip()
+        await interaction.response.defer(ephemeral=True)
+        async with bot.session_factory.session() as session:
+            existing = list(
+                await session.scalars(
+                    select(LocationRecommendation).where(
+                        LocationRecommendation.guild_id == bot.settings.discord_guild_id,
+                        LocationRecommendation.good_type == normalized_good_type,
+                    )
+                )
+            )
+            if not existing:
+                await interaction.followup.send(
+                    f"No council recommendation override exists for `{normalized_good_type}`.",
+                    ephemeral=True,
+                )
+                return
+            await session.execute(
+                delete(LocationRecommendation).where(
+                    LocationRecommendation.guild_id == bot.settings.discord_guild_id,
+                    LocationRecommendation.good_type == normalized_good_type,
+                )
+            )
+            guild_config = await session.get(GuildConfig, bot.settings.discord_guild_id)
+
+        if guild_config and guild_config.alert_channel_id:
+            await bot.alert_service.send_to_channel(
+                guild_config.alert_channel_id,
+                f"Recommendation override removed for {normalized_good_type}.",
+            )
+        await bot.refresh_due_embeds(force_all=True)
+        await interaction.followup.send("Recommendation override removed and embeds refreshed.", ephemeral=True)
+
+    @app_commands.command(
         name="show_recommended_regions",
         description="Show the current recommended locations embed from cached data.",
     )
@@ -219,6 +268,7 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
 
     return [
         set_location_recommendation,
+        remove_location_recommendation,
         show_recommended_regions,
         start_list_recommended_region,
         refresh_list_recommended_region,

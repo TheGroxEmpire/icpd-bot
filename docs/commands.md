@@ -173,6 +173,58 @@ Response:
 
 - ephemeral confirmation
 
+### `/add_cooperator_country`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `country_id`: Warera country selected from autocomplete
+
+Behavior:
+
+- requires the country to exist in cache
+- adds or updates the explicit cooperator-country list used for ownership status display
+
+Response:
+
+- ephemeral confirmation
+
+### `/remove_cooperator_country`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `country_id`: Warera country selected from autocomplete
+
+Behavior:
+
+- removes a cooperator country record if present
+
+Response:
+
+- ephemeral confirmation or not-found message
+
+### `/list_cooperator_countries`
+
+Permission: `Read-only access`
+
+Arguments:
+
+- `post_publicly`: optional boolean, default `false`
+- `tag`: optional free text included above the embed when posting publicly
+
+Behavior:
+
+- shows the explicit cooperator-country list
+- if `post_publicly=true`, posts the embed in the current channel and sends a private confirmation to the caller
+
+Response:
+
+- default: ephemeral embed
+- public mode: channel embed plus ephemeral confirmation
+
 ### `/remove_icpd_proxy`
 
 Permission: `Council-only`
@@ -232,6 +284,24 @@ Behavior:
 Response:
 
 - ephemeral confirmation
+
+### `/remove_location_recommendation`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `good_type`: autocomplete from cached goods
+
+Behavior:
+
+- removes all manual recommendation overrides for that good in the configured guild
+- refreshes managed recommendation embeds
+- sends an alert to the configured alert channel when one is set
+
+Response:
+
+- ephemeral confirmation or not-found message
 
 ### `/add_read_only_role`
 

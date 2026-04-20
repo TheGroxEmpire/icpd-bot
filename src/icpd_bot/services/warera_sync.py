@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import select
@@ -28,7 +28,6 @@ class WareraSyncCounts:
 
 class WareraSyncService:
     PARTY_BATCH_SIZE = 100
-    PARTY_CACHE_REFRESH_INTERVAL = timedelta(hours=24)
 
     def __init__(self, session: AsyncSession, client: WareraClient) -> None:
         self.session = session
@@ -99,7 +98,7 @@ class WareraSyncService:
             {
                 str(payload.get("rulingParty")).strip()
                 for payload in countries
-                if payload.get("rulingParty") and payload.get("specializedItem")
+                if payload.get("rulingParty")
             }
         )
         existing_party_records = {
@@ -109,12 +108,7 @@ class WareraSyncService:
             )
         } if party_ids else {}
 
-        stale_party_ids: list[str] = []
-        for party_id in party_ids:
-            record = existing_party_records.get(party_id)
-            if record is not None and record.fetched_at and now - record.fetched_at < self.PARTY_CACHE_REFRESH_INTERVAL:
-                continue
-            stale_party_ids.append(party_id)
+        stale_party_ids = party_ids
 
         for party_chunk in self._chunked(stale_party_ids, self.PARTY_BATCH_SIZE):
             try:

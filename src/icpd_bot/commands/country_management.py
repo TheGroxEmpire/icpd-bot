@@ -6,8 +6,9 @@ from discord import app_commands
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
-from icpd_bot.db.models import IcpdCountry, IcpdProxy, SanctionedCountry, WareraCountryCache
+from icpd_bot.db.models import CooperatorCountry, IcpdCountry, IcpdProxy, SanctionedCountry, WareraCountryCache
 from icpd_bot.services.country_registry import (
+    CooperatorCountryService,
     CountryInput,
     IcpdCountryService,
     IcpdProxyService,
@@ -44,7 +45,7 @@ async def send_embed_with_visibility_option(
     await interaction.response.send_message("Posted the embed publicly.", ephemeral=True)
 
 
-def format_country_lines(records: Iterable[SanctionedCountry | IcpdCountry | IcpdProxy]) -> str:
+def format_country_lines(records: Iterable[SanctionedCountry | IcpdCountry | CooperatorCountry | IcpdProxy]) -> str:
     lines: list[str] = []
     for record in records:
         line = f"`{record.country_code}` {record.country_name_snapshot} ({record.country_id})"
@@ -69,22 +70,62 @@ def country_link(country_id: str) -> str:
 def build_country_list_embed(
     *,
     title: str,
-    records: Iterable[SanctionedCountry | IcpdCountry | IcpdProxy],
+    records: Iterable[SanctionedCountry | IcpdCountry | CooperatorCountry | IcpdProxy],
 ) -> discord.Embed:
     embed = discord.Embed(title=title)
     records_list = list(records)
     if not records_list:
         embed.description = "No entries stored."
         return embed
-    for record in records_list[:25]:
+
+    def chunk_blocks(blocks: list[str], limit: int = 1024) -> list[str]:
+        if not blocks:
+            return ["No entries stored."]
+        chunks: list[str] = []
+        current = ""
+        for block in blocks:
+            candidate = block if not current else f"{current}\n\n{block}"
+            if len(candidate) > limit:
+                if current:
+                    chunks.append(current)
+                    current = block
+                else:
+                    chunks.append(block[:limit])
+                    current = block[limit:]
+            else:
+                current = candidate
+        if current:
+            chunks.append(current)
+        return chunks
+
+    blocks: list[str] = []
+    for record in records_list:
         flag = country_flag(record.country_code)
-        line = f"{flag} {record.country_name_snapshot}".strip()
-        details = f"`{record.country_code}`\nID: `{record.country_id}`"
+        country_label = f"{flag} [{record.country_name_snapshot}]({country_link(record.country_id)})".strip()
+        details = [f"`{record.country_code}`"]
         if isinstance(record, SanctionedCountry):
-            details = f"{details}\nSanction: `{record.sanction_level}`"
+            details.append(f"Sanction: `{record.sanction_level}`")
         if isinstance(record, IcpdProxy):
-            details = f"{details}\nOverlord: {record.overlord_country_name_snapshot}"
-        embed.add_field(name=line, value=details, inline=False)
+            details.append(f"Overlord: {record.overlord_country_name_snapshot}")
+        blocks.append(f"**{country_label}**\n" + "\n".join(details))
+
+    midpoint = (len(blocks) + 1) // 2
+    left_chunks = chunk_blocks(blocks[:midpoint])
+    right_chunks = chunk_blocks(blocks[midpoint:]) if midpoint < len(blocks) else []
+    max_rows = max(len(left_chunks), len(right_chunks))
+    for row in range(max_rows):
+        embed.add_field(
+            name="\u200b",
+            value=left_chunks[row] if row < len(left_chunks) else "\u200b",
+            inline=True,
+        )
+        embed.add_field(
+            name="\u200b",
+            value=right_chunks[row] if row < len(right_chunks) else "\u200b",
+            inline=True,
+        )
+        if row != max_rows - 1:
+            embed.add_field(name="\u200b", value="\u200b", inline=False)
     return embed
 
 
@@ -495,6 +536,88 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
             ephemeral=True,
         )
 
+    @app_commands.command(name="add_cooperator_country", description="Add or update a cooperator country.")
+    @app_commands.describe(country_id="Pick a Warera country")
+    @app_commands.autocomplete(country_id=autocomplete_warera_country)
+    async def add_cooperator_country(
+        interaction: discord.Interaction,
+        country_id: str,
+    ) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        country = await resolve_warera_country(country_id, bot)
+        if country is None:
+            await interaction.response.send_message(
+                "Country not found in cache. Run `/sync_warera_cache` first.",
+                ephemeral=True,
+            )
+            return
+
+        async with bot.session_factory.session() as session:
+            await CooperatorCountryService(session).upsert(
+                CountryInput(
+                    country_id=country_id,
+                    country_code=country.code,
+                    country_name=country.name,
+                    actor_id=interaction.user.id,
+                )
+            )
+
+        await interaction.response.send_message(
+            f"Stored cooperator country `{country.code.upper()}`.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="remove_cooperator_country", description="Remove a cooperator country.")
+    @app_commands.describe(country_id="Pick a Warera country")
+    @app_commands.autocomplete(country_id=autocomplete_warera_country)
+    async def remove_cooperator_country(interaction: discord.Interaction, country_id: str) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        async with bot.session_factory.session() as session:
+            removed = await CooperatorCountryService(session).remove(country_id)
+
+        message = "Cooperator country removed." if removed else "No cooperator country found for that ID."
+        await interaction.response.send_message(message, ephemeral=True)
+
+    @app_commands.command(name="list_cooperator_countries", description="List cooperator countries.")
+    @app_commands.describe(
+        post_publicly="Post the embed publicly in this channel",
+        tag="Optional tag or message to include when posting publicly",
+    )
+    async def list_cooperator_countries(
+        interaction: discord.Interaction,
+        post_publicly: bool = False,
+        tag: str | None = None,
+    ) -> None:
+        if not await require_read_only_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+            session_factory=bot.session_factory,
+        ):
+            return
+
+        async with bot.session_factory.session() as session:
+            records = await CooperatorCountryService(session).list_all()
+
+        await send_embed_with_visibility_option(
+            interaction,
+            embed=build_country_list_embed(title="Cooperator Countries", records=records),
+            post_publicly=post_publicly,
+            tag=tag,
+        )
+
     @app_commands.command(name="remove_icpd_proxy", description="Remove an ICPD proxy country.")
     @app_commands.describe(
         country_id="Pick a proxy country",
@@ -629,6 +752,9 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
         remove_icpd_country,
         list_icpd_countries,
         add_icpd_proxy,
+        add_cooperator_country,
+        remove_cooperator_country,
+        list_cooperator_countries,
         remove_icpd_proxy,
         list_icpd_proxies,
         add_read_only_role,
