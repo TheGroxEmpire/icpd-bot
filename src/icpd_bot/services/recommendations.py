@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Iterable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -102,13 +103,14 @@ class RecommendationService:
                 )
                 continue
 
-            candidate_regions = [
-                region
-                for region in regions
-                if countries_by_id.get(region.country_id) is not None
-                    and countries_by_id[region.country_id].production_specialization == good_type
-                
-            ]
+            candidate_regions = self._candidate_regions_for_good(
+                good_type=good_type,
+                regions=regions,
+                countries_by_id=countries_by_id,
+                sanctions_by_id=sanctions_by_id,
+                icpd_country_ids=icpd_country_ids,
+                proxy_country_ids=proxy_country_ids,
+            )
             eligible_regions = [
                 region
                 for region in candidate_regions
@@ -152,7 +154,28 @@ class RecommendationService:
                 proxy_country_ids=proxy_country_ids,
             )
             resistance_display = self._resistance_display(region)
-            if country and country.production_specialization == good_type:
+            sanctioned_source_country = countries_by_id.get(region.initial_country_id) if (
+                region.initial_country_id and region.initial_country_id != region.country_id
+            ) else None
+            source_sanction = sanctions_by_id.get(region.initial_country_id) if region.initial_country_id else None
+            if (
+                sanctioned_source_country is not None
+                and sanctioned_source_country.production_specialization == good_type
+                and source_sanction is not None
+                and source_sanction.sanction_level == "limited"
+            ):
+                if self._is_icpd_aligned_country(
+                    region.country_id,
+                    icpd_country_ids=icpd_country_ids,
+                    proxy_country_ids=proxy_country_ids,
+                ):
+                    note = f"ICPD-aligned occupied territory in limited-sanction {sanctioned_source_country.name}."
+                else:
+                    note = (
+                        f"Highest-resistance occupied territory in limited-sanction "
+                        f"{sanctioned_source_country.name}."
+                    )
+            elif country and country.production_specialization == good_type:
                 note = f"Country specialization match in {country.name}."
             else:
                 note = "Best eligible cached region."
@@ -175,6 +198,84 @@ class RecommendationService:
             )
 
         return results
+
+    @classmethod
+    def _candidate_regions_for_good(
+        cls,
+        *,
+        good_type: str,
+        regions: list[WareraRegionCache],
+        countries_by_id: dict[str, WareraCountryCache],
+        sanctions_by_id: dict[str, SanctionedCountry],
+        icpd_country_ids: set[str],
+        proxy_country_ids: set[str],
+    ) -> list[WareraRegionCache]:
+        limited_sanction_country_ids = {
+            country_id
+            for country_id, country in countries_by_id.items()
+            if country.production_specialization == good_type
+            and sanctions_by_id.get(country_id) is not None
+            and sanctions_by_id[country_id].sanction_level == "limited"
+        }
+        limited_sanction_fallbacks = {
+            country_id: cls._limited_sanction_occupied_regions(
+                country_id=country_id,
+                regions=regions,
+                icpd_country_ids=icpd_country_ids,
+                proxy_country_ids=proxy_country_ids,
+            )
+            for country_id in limited_sanction_country_ids
+        }
+        fallback_country_ids = {
+            country_id
+            for country_id, fallback_regions in limited_sanction_fallbacks.items()
+            if fallback_regions
+        }
+
+        candidates_by_id: dict[str, WareraRegionCache] = {
+            region.region_id: region
+            for region in regions
+            if countries_by_id.get(region.country_id) is not None
+            and countries_by_id[region.country_id].production_specialization == good_type
+            and region.country_id not in fallback_country_ids
+        }
+
+        for fallback_regions in limited_sanction_fallbacks.values():
+            for region in fallback_regions:
+                candidates_by_id.setdefault(region.region_id, region)
+
+        return list(candidates_by_id.values())
+
+    @classmethod
+    def _limited_sanction_occupied_regions(
+        cls,
+        *,
+        country_id: str,
+        regions: Iterable[WareraRegionCache],
+        icpd_country_ids: set[str],
+        proxy_country_ids: set[str],
+    ) -> list[WareraRegionCache]:
+        occupied_regions = [
+            region
+            for region in regions
+            if region.initial_country_id == country_id and region.country_id != country_id
+        ]
+        if not occupied_regions:
+            return []
+
+        icpd_aligned_regions = [
+            region
+            for region in occupied_regions
+            if cls._is_icpd_aligned_country(
+                region.country_id,
+                icpd_country_ids=icpd_country_ids,
+                proxy_country_ids=proxy_country_ids,
+            )
+        ]
+        if icpd_aligned_regions:
+            return icpd_aligned_regions
+
+        return [max(occupied_regions, key=cls._occupied_region_priority_key)]
 
     @classmethod
     def _is_region_eligible(
@@ -232,6 +333,18 @@ class RecommendationService:
         if not country_id:
             return False
         return country_id in icpd_country_ids or country_id in proxy_country_ids
+
+    @staticmethod
+    def _occupied_region_priority_key(region: WareraRegionCache) -> tuple[float, int, float, str]:
+        resistance_ratio = 0.0
+        if region.resistance is not None and region.resistance_max not in (None, 0):
+            resistance_ratio = region.resistance / region.resistance_max
+        return (
+            resistance_ratio,
+            region.resistance or 0,
+            region.development or 0.0,
+            region.name,
+        )
 
     @staticmethod
     def _ownership_status(
