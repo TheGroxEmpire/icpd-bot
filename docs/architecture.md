@@ -162,11 +162,14 @@ Council member runs recommendation command
 
 The recommendation engine should be treated as policy, not hardcoded scattered logic.
 
-Initial policy based on current requirements:
+Current policy based on the implemented service:
 
-- consider the highest-production regions first
-- a region is eligible if its current country is not sanctioned
-- a limited sanction still permits factory placement in proxy countries owned by ICPD countries when that proxy country is occupied by the sanctioned country
+- manual council overrides beat automatic recommendations for the same good
+- automatic ranking is driven by cached production bonus data, development, and region metadata
+- a region is eligible if its current country is not fully sanctioned
+- a limited-sanction specialist country can fall back to occupied territories for recommendation purposes when direct placement should be avoided
+- ICPD-aligned occupied territories are preferred for that fallback when available
+- if no ICPD-aligned occupier exists, the occupied territory with the highest resistance ratio is preferred to reduce tax flow to the sanctioned country
 - a full sanction bars factory placement for any company using workers from ICPD countries
 - the output should explain why a region is recommended
 - the output should show recommended locations for every good currently available on Warera
@@ -181,9 +184,8 @@ Recommended implementation approach:
 
 These should be finalized during implementation:
 
-- the exact scoring formula for "highest production"
-- whether development, strategic resource, tax data, or specialization should affect ranking within a good type
-- how occupation is derived from Warera cache data for proxy-country eligibility
+- whether tax leakage should continue using resistance ratio only or include other occupation signals
+- whether development, strategic resource, or other cached fields should be weighted differently within a good type
 - how many goods and locations appear in one embed page before pagination is required
 
 ## Database Design

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document explains how the project should be developed once implementation begins. It focuses on local setup, conventions, and the rules that keep the bot maintainable.
+This document explains how the project is developed today. It focuses on local setup, conventions, and the rules that keep the bot maintainable as implementation continues.
 
 ## Local Tooling
 
@@ -21,9 +21,9 @@ This document explains how the project should be developed once implementation b
 
 ## Environment Variables
 
-The project should expose all runtime configuration through environment variables.
+The project exposes runtime configuration through environment variables.
 
-Planned variables:
+Current variables:
 
 - `DISCORD_TOKEN`
 - `DISCORD_GUILD_ID`
@@ -35,7 +35,7 @@ Planned variables:
 - `RECOMMENDED_REGION_REFRESH_MINUTES`
 - `LOG_LEVEL`
 
-Optional later variables:
+Potential later variables:
 
 - `DISCORD_PUBLIC_GUILD_IDS`
 - `HTTP_TIMEOUT_SECONDS`
@@ -44,9 +44,9 @@ Optional later variables:
 
 ## Local Setup Workflow
 
-The default development workflow should use Docker so the project always runs on Python `3.13` regardless of the host machine.
+The default development workflow uses Docker so the project runs on Python `3.13` regardless of the host machine.
 
-Local development should look like this:
+Local development looks like this:
 
 1. Clone the private GitHub repository
 2. Copy `.env.example` to `.env`
@@ -172,6 +172,7 @@ Focus on:
 
 - recommendation scoring and eligibility
 - limited vs full sanction behavior
+- occupied-territory fallback selection for limited sanctions
 - proxy-country eligibility when occupied by sanctioned countries
 - permission checks
 - data normalization from Warera payloads
@@ -195,6 +196,7 @@ Focus on:
 - the embed lists a recommended location for every good currently available on Warera
 - specialization changes in sanctioned countries post to the configured channel
 - recommendation changes for watched locations post alerts once and refresh the managed embed
+- limited-sanction specialist countries fall back to ICPD-aligned or highest-resistance occupied territories as expected
 - stale cache state is visible in status output
 
 ## GitHub Workflow

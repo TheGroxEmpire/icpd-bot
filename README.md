@@ -2,12 +2,14 @@
 
 Private Discord bot for ICPD operations in Warera.
 
-This repository is intended to host a Python-based Discord bot that:
+This repository contains a Python-based Discord bot that:
 
 - handles slash commands for ICPD staff and Discord admins
-- manages ICPD-specific country lists such as sanctioned countries and ICPD countries
+- manages sanctioned countries, ICPD countries, and ICPD proxy countries
 - caches Warera data locally so the bot can respond even if the upstream API is slow
+- syncs Warera country, region, and party data on a schedule
 - publishes and refreshes a recommended-region embed on a schedule
+- sends recommendation-change and specialization alerts to a shared channel
 - can be invited to more than one Discord server when alerts or public embeds need to live outside the main ICPD guild
 
 ## Product Goals
@@ -49,7 +51,7 @@ Important design rule:
 - Slash commands should read from cached data whenever possible
 - Background sync jobs should be responsible for talking to the Warera API
 
-## Initial Feature Scope
+## Current Command Set
 
 ### Council-only commands
 
@@ -59,19 +61,24 @@ Important design rule:
 - `/add_icpd_country`
 - `/remove_icpd_country`
 - `/list_icpd_countries`
+- `/add_icpd_proxy`
+- `/remove_icpd_proxy`
+- `/list_icpd_proxies`
+- `/set_location_recommendation`
 
 ### Admin commands
 
+- `/sync_warera_cache`
 - `/start_list_recommended_region`
 - `/stop_list_recommended_region`
 - `/refresh_list_recommended_region`
+- `/set_alert_channel`
+- `/clear_alert_channel`
 
 ### Public or read-only commands
 
 - `/show_recommended_regions`
 - `/bot_status`
-
-The exact command set can expand, but these are the baseline capabilities the architecture is built for.
 
 ## Planned Repository Layout
 
@@ -136,6 +143,21 @@ This repository is expected to be private. The default operating assumptions are
 - deployment environments use pinned images and explicit configuration
 - changes to commands, schema, and recommendation logic should go through pull requests
 
+## Recommendation Policy Snapshot
+
+- manual council recommendations override automatic picks for a good
+- full sanctions make regions in or sourced from that country ineligible
+- limited sanctions can fall back to occupied territory for sanctioned specialist countries when direct placement should be avoided
+- when that fallback is needed, the engine prefers ICPD-aligned occupied territory first
+- if no ICPD-aligned occupier exists, the engine recommends the occupied territory with the strongest resistance ratio to maximize tax leakage away from the sanctioned country
+- automatic picks still use cached production bonus, development, and region metadata for ranking
+
 ## Current Status
 
-Documentation bootstrap complete. Implementation is planned but not yet started.
+The core bot is implemented and wired up:
+
+- Discord slash commands are registered from the live bot
+- PostgreSQL schema and Alembic migrations are present
+- Warera cache sync, managed embed refresh, and alert delivery are implemented
+- the recommendation engine is active and sanction-aware
+- baseline tests exist, with focused unit coverage around limited-sanction occupied-territory fallback behavior

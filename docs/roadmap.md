@@ -1,10 +1,20 @@
 # Roadmap
 
+## Status Summary
+
+Current repo status:
+
+- phases 0 through 6 are substantially implemented in the codebase
+- phase 7 has partial coverage in place with settings tests and focused recommendation-policy tests
+- phase 8 is in progress, including documentation refreshes like this one
+
 ## Goal
 
 Build a private, production-ready Discord bot for ICPD operations in Warera with durable cached data, role-aware slash commands, sanction-aware recommendation rules, proxy-country tracking, and an automatically refreshed recommended-region embed.
 
 ## Phase 0: Repository Bootstrap
+
+Status: Complete
 
 Deliverables:
 
@@ -22,6 +32,8 @@ Definition of done:
 
 ## Phase 1: Database Foundation
 
+Status: Complete
+
 Deliverables:
 
 - SQLAlchemy setup
@@ -34,6 +46,8 @@ Definition of done:
 - local and CI environments can apply migrations cleanly
 
 ## Phase 2: Warera Cache Sync
+
+Status: Complete
 
 Deliverables:
 
@@ -50,6 +64,8 @@ Definition of done:
 
 ## Phase 3: Command Framework
 
+Status: Complete
+
 Deliverables:
 
 - slash command registration
@@ -63,6 +79,8 @@ Definition of done:
 - unauthorized users are rejected consistently
 
 ## Phase 4: ICPD Country Management Commands
+
+Status: Complete
 
 Deliverables:
 
@@ -81,6 +99,8 @@ Definition of done:
 
 ## Phase 5: Recommendation Engine
 
+Status: Complete
+
 Deliverables:
 
 - normalized recommendation inputs
@@ -94,11 +114,15 @@ Deliverables:
 Definition of done:
 
 - the engine produces deterministic ranked output from cached data
-- limited sanctions allow factories in proxy countries occupied by the sanctioned country
+- limited sanctions can fall back to occupied territory when a sanctioned specialist country loses direct eligibility
+- ICPD-aligned occupied territories are preferred when present
+- otherwise the highest-resistance occupied territory is selected to reduce tax flow to the sanctioned country
 - full sanctions bar factories for any company using workers from ICPD countries
 - business rules are isolated in one service
 
 ## Phase 6: Managed Embed Refresh
+
+Status: Complete
 
 Deliverables:
 
@@ -118,6 +142,8 @@ Definition of done:
 
 ## Phase 7: Quality and Operations
 
+Status: In progress
+
 Deliverables:
 
 - tests
@@ -132,6 +158,8 @@ Definition of done:
 - deployment issues are diagnosable from logs
 
 ## Phase 8: Private GitHub Release Readiness
+
+Status: In progress
 
 Deliverables:
 
