@@ -37,6 +37,13 @@ class GuildConfigService:
         config.alert_channel_id = channel_id
         return config
 
+    async def set_alert_role(self, guild_id: int, role_id: int | None) -> GuildConfig:
+        config = await self.get_guild_config(guild_id)
+        if config is None:
+            raise ValueError(f"Guild config {guild_id} does not exist.")
+        config.alert_role_id = role_id
+        return config
+
     async def list_read_only_roles(self, guild_id: int) -> list[GuildReadOnlyRole]:
         return list(
             await self.session.scalars(

@@ -77,6 +77,8 @@ Important design rule:
 - `/refresh_list_recommended_region`
 - `/set_alert_channel`
 - `/clear_alert_channel`
+- `/set_alert_role`
+- `/clear_alert_role`
 - `/add_read_only_role`
 - `/remove_read_only_role`
 - `/list_read_only_roles`

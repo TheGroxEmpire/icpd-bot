@@ -87,4 +87,64 @@ def build_admin_config_commands(bot: "ICPDBot") -> list[app_commands.Command]:
             ephemeral=True,
         )
 
-    return [set_alert_channel, clear_alert_channel]
+    @app_commands.command(
+        name="set_alert_role",
+        description="Set a role to mention whenever the bot posts an alert.",
+    )
+    async def set_alert_role(interaction: discord.Interaction, role_id: str) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        try:
+            normalized_role_id = int(role_id)
+        except ValueError:
+            await interaction.response.send_message(
+                "Role ID must be a numeric Discord role ID.",
+                ephemeral=True,
+            )
+            return
+
+        guild = interaction.guild
+        role = guild.get_role(normalized_role_id) if guild is not None else None
+        if role is None:
+            await interaction.response.send_message(
+                "I could not find that role in the configured ICPD server.",
+                ephemeral=True,
+            )
+            return
+
+        async with bot.session_factory.session() as session:
+            service = GuildConfigService(session)
+            await service.set_alert_role(bot.settings.discord_guild_id, normalized_role_id)
+
+        await interaction.response.send_message(
+            f"Alert role set to {role.mention}.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(
+        name="clear_alert_role",
+        description="Stop mentioning a role when posting alerts.",
+    )
+    async def clear_alert_role(interaction: discord.Interaction) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        async with bot.session_factory.session() as session:
+            service = GuildConfigService(session)
+            await service.set_alert_role(bot.settings.discord_guild_id, None)
+
+        await interaction.response.send_message(
+            "Alert role cleared.",
+            ephemeral=True,
+        )
+
+    return [set_alert_channel, clear_alert_channel, set_alert_role, clear_alert_role]

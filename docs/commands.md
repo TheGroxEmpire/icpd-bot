@@ -550,6 +550,22 @@ Response:
 
 - ephemeral confirmation
 
+### `/set_alert_role`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `role_id`: numeric Discord role ID from the configured guild
+
+Behavior:
+
+- stores a role to mention whenever the bot posts an alert
+
+Response:
+
+- ephemeral confirmation
+
 ### `/clear_alert_channel`
 
 Permission: `Council-only`
@@ -557,6 +573,18 @@ Permission: `Council-only`
 Behavior:
 
 - clears the shared alert channel setting
+
+Response:
+
+- ephemeral confirmation
+
+### `/clear_alert_role`
+
+Permission: `Council-only`
+
+Behavior:
+
+- clears the configured alert role mention
 
 Response:
 

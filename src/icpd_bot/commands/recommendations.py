@@ -124,6 +124,7 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
             await bot.alert_service.send_to_channel(
                 guild_config.alert_channel_id,
                 f"Recommendation updated for {good_type.strip()}: {region.name}.",
+                role_id=guild_config.alert_role_id,
             )
         await bot.refresh_due_embeds(force_all=True)
         await interaction.followup.send("Recommendation stored and embeds refreshed.", ephemeral=True)
@@ -173,6 +174,7 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
             await bot.alert_service.send_to_channel(
                 guild_config.alert_channel_id,
                 f"Recommendation override removed for {normalized_good_type}.",
+                role_id=guild_config.alert_role_id,
             )
         await bot.refresh_due_embeds(force_all=True)
         await interaction.followup.send("Recommendation override removed and embeds refreshed.", ephemeral=True)
@@ -230,6 +232,7 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
             await bot.alert_service.send_to_channel(
                 guild_config.alert_channel_id,
                 f"Recommendation region ignored: {region.name}.",
+                role_id=guild_config.alert_role_id,
             )
         await bot.refresh_due_embeds(force_all=True)
         await interaction.followup.send("Region ignored and embeds refreshed.", ephemeral=True)
@@ -303,6 +306,7 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
             await bot.alert_service.send_to_channel(
                 guild_config.alert_channel_id,
                 f"Deposit ignored for {normalized_good_type} in {region.name} until {expires_at.isoformat()}.",
+                role_id=guild_config.alert_role_id,
             )
         await bot.refresh_due_embeds(force_all=True)
         await interaction.followup.send("Region deposit ignored temporarily and embeds refreshed.", ephemeral=True)
@@ -352,6 +356,7 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
             await bot.alert_service.send_to_channel(
                 guild_config.alert_channel_id,
                 f"Deposit restored for {normalized_good_type} in {region_name}.",
+                role_id=guild_config.alert_role_id,
             )
         await bot.refresh_due_embeds(force_all=True)
         await interaction.followup.send("Ignored region deposit removed and embeds refreshed.", ephemeral=True)
@@ -443,6 +448,7 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
             await bot.alert_service.send_to_channel(
                 guild_config.alert_channel_id,
                 f"Recommendation region restored: {region_name}.",
+                role_id=guild_config.alert_role_id,
             )
         await bot.refresh_due_embeds(force_all=True)
         await interaction.followup.send("Ignored region removed and embeds refreshed.", ephemeral=True)

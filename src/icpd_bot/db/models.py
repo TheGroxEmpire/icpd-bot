@@ -17,6 +17,7 @@ class GuildConfig(Base):
     council_role_id: Mapped[int] = mapped_column(BigInteger)
     default_refresh_interval_minutes: Mapped[int] = mapped_column(Integer, default=15)
     alert_channel_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    alert_role_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class GuildReadOnlyRole(Base):

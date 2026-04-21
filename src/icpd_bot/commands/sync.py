@@ -33,7 +33,11 @@ def build_sync_commands(bot: "ICPDBot") -> list[app_commands.Command]:
 
         for change in counts.specialization_changes:
             if guild_config and guild_config.alert_channel_id:
-                await bot.alert_service.send_to_channel(guild_config.alert_channel_id, change)
+                await bot.alert_service.send_to_channel(
+                    guild_config.alert_channel_id,
+                    change,
+                    role_id=guild_config.alert_role_id,
+                )
         await bot.refresh_due_embeds(force_all=True)
         await interaction.followup.send(
             f"Warera cache synced. Countries: {counts.countries}, regions: {counts.regions}.",

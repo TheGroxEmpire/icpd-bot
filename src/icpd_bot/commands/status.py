@@ -42,6 +42,15 @@ def build_status_command(bot: "ICPDBot") -> app_commands.Command:
             inline=False,
         )
         embed.add_field(
+            name="Alert Role",
+            value=(
+                str(guild_config.alert_role_id)
+                if guild_config and guild_config.alert_role_id
+                else "Not configured"
+            ),
+            inline=False,
+        )
+        embed.add_field(
             name="Refresh Interval",
             value=f"{bot.settings.recommended_region_refresh_minutes} minutes",
             inline=False,

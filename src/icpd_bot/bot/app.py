@@ -104,7 +104,11 @@ class ICPDBot(commands.Bot):
                 guild_config = await GuildConfigService(session).get_guild_config(self.settings.discord_guild_id)
         if guild_config and guild_config.alert_channel_id:
             for change in counts.specialization_changes:
-                await self.alert_service.send_to_channel(guild_config.alert_channel_id, change)
+                await self.alert_service.send_to_channel(
+                    guild_config.alert_channel_id,
+                    change,
+                    role_id=guild_config.alert_role_id if guild_config else None,
+                )
         await self.refresh_due_embeds(force_all=True)
 
     @tasks.loop(seconds=60)
