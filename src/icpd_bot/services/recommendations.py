@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from icpd_bot.db.models import (
     CooperatorCountry,
+    IgnoredRecommendationRegion,
     IcpdCountry,
     IcpdProxy,
     LocationRecommendation,
@@ -72,6 +73,11 @@ class RecommendationService:
                 .order_by(LocationRecommendation.good_type, LocationRecommendation.updated_at.desc())
             )
         )
+        ignored_regions = list(
+            await self.session.scalars(
+                select(IgnoredRecommendationRegion).where(IgnoredRecommendationRegion.guild_id == guild_id)
+            )
+        )
 
         countries_by_id = {country.country_id: country for country in countries}
         parties_by_id = {party.party_id: party for party in parties}
@@ -79,6 +85,7 @@ class RecommendationService:
         proxy_country_ids = {proxy.country_id for proxy in proxies}
         cooperator_country_ids = {country.country_id for country in cooperators}
         icpd_country_ids = {country.country_id for country in await self.session.scalars(select(IcpdCountry))}
+        ignored_region_ids = {record.region_id for record in ignored_regions}
         manual_by_good: dict[str, LocationRecommendation] = {}
         for record in manual:
             manual_by_good.setdefault(record.good_type, record)
@@ -158,6 +165,7 @@ class RecommendationService:
                 icpd_country_ids=icpd_country_ids,
                 cooperator_country_ids=cooperator_country_ids,
                 proxy_country_ids=proxy_country_ids,
+                ignored_region_ids=ignored_region_ids,
             )
             eligible_regions = [
                 region
@@ -277,6 +285,7 @@ class RecommendationService:
         icpd_country_ids: set[str],
         cooperator_country_ids: set[str],
         proxy_country_ids: set[str],
+        ignored_region_ids: set[str],
     ) -> list[WareraRegionCache]:
         normalized_good_type = cls._resolve_material_id(good_type)
         if not normalized_good_type:
@@ -331,6 +340,8 @@ class RecommendationService:
             region.region_id: region
             for region in regions
             if (
+                region.region_id not in ignored_region_ids
+                and
                 countries_by_id.get(region.country_id) is not None
                 and (
                     cls._resolve_material_id(countries_by_id[region.country_id].production_specialization)
@@ -343,10 +354,12 @@ class RecommendationService:
 
         for fallback_regions in limited_sanction_fallbacks.values():
             for region in fallback_regions:
-                candidates_by_id.setdefault(region.region_id, region)
+                if region.region_id not in ignored_region_ids:
+                    candidates_by_id.setdefault(region.region_id, region)
         for fallback_regions in aligned_specialist_fallbacks.values():
             for region in fallback_regions:
-                candidates_by_id.setdefault(region.region_id, region)
+                if region.region_id not in ignored_region_ids:
+                    candidates_by_id.setdefault(region.region_id, region)
 
         return list(candidates_by_id.values())
 

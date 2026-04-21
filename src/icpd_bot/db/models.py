@@ -101,6 +101,21 @@ class LocationRecommendation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class IgnoredRecommendationRegion(Base):
+    __tablename__ = "ignored_recommendation_regions"
+
+    guild_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("guild_config.guild_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    region_id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    region_name_snapshot: Mapped[str] = mapped_column(String(255))
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class SpecializationAlertState(Base):
     __tablename__ = "specialization_alert_state"
 

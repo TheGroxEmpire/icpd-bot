@@ -363,6 +363,57 @@ Response:
 
 - ephemeral confirmation or not-found message
 
+### `/ignore_recommendation_region`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `location_identifier`: autocomplete from cached regions
+- `note`: optional free text
+
+Behavior:
+
+- stores a temporary ignore entry for that region in automatic recommendations
+- requires the region to exist in cache
+- refreshes managed recommendation embeds
+- sends an alert to the configured alert channel when one is set
+
+Response:
+
+- ephemeral confirmation
+
+### `/unignore_region`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `location_identifier`: autocomplete from cached regions
+
+Behavior:
+
+- removes a temporary ignore entry for that region
+- refreshes managed recommendation embeds
+- sends an alert to the configured alert channel when one is set
+
+Response:
+
+- ephemeral confirmation or not-found message
+
+### `/list_ignored_regions`
+
+Permission: `Read-only access`
+
+Shows:
+
+- the regions currently excluded from automatic recommendations
+- any stored note explaining why they were ignored
+
+Response:
+
+- ephemeral embed
+
 ### `/add_read_only_role`
 
 Permission: `Council-only`

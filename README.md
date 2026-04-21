@@ -67,6 +67,8 @@ Important design rule:
 - `/remove_hostile_proxy`
 - `/set_location_recommendation`
 - `/remove_location_recommendation`
+- `/ignore_recommendation_region`
+- `/unignore_region`
 - `/sync_warera_cache`
 - `/start_list_recommended_region`
 - `/stop_list_recommended_region`
@@ -85,6 +87,7 @@ Important design rule:
 - `/list_icpd_proxies`
 - `/list_hostile_proxies`
 - `/show_recommended_regions`
+- `/list_ignored_regions`
 - `/bot_status`
 
 ## Planned Repository Layout

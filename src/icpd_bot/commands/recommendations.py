@@ -4,7 +4,13 @@ import discord
 from discord import app_commands
 from sqlalchemy import delete, or_, select
 
-from icpd_bot.db.models import GuildConfig, LocationRecommendation, WareraCountryCache, WareraRegionCache
+from icpd_bot.db.models import (
+    GuildConfig,
+    IgnoredRecommendationRegion,
+    LocationRecommendation,
+    WareraCountryCache,
+    WareraRegionCache,
+)
 from icpd_bot.services.permissions import require_council_access, require_read_only_access
 from icpd_bot.services.recommendations import RecommendationService
 from icpd_bot.views.recommended_regions import build_recommended_regions_embed
@@ -170,6 +176,142 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         await interaction.followup.send("Recommendation override removed and embeds refreshed.", ephemeral=True)
 
     @app_commands.command(
+        name="ignore_recommendation_region",
+        description="Temporarily ignore a region in automatic recommendations.",
+    )
+    @app_commands.autocomplete(location_identifier=autocomplete_regions)
+    async def ignore_recommendation_region(
+        interaction: discord.Interaction,
+        location_identifier: str,
+        note: str | None = None,
+    ) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        async with bot.session_factory.session() as session:
+            region = await session.get(WareraRegionCache, location_identifier.strip())
+            if region is None:
+                await interaction.followup.send(
+                    "Location not found in cache. Run `/sync_warera_cache` first.",
+                    ephemeral=True,
+                )
+                return
+            existing = await session.get(
+                IgnoredRecommendationRegion,
+                {
+                    "guild_id": bot.settings.discord_guild_id,
+                    "region_id": location_identifier.strip(),
+                },
+            )
+            if existing is None:
+                session.add(
+                    IgnoredRecommendationRegion(
+                        guild_id=bot.settings.discord_guild_id,
+                        region_id=location_identifier.strip(),
+                        region_name_snapshot=region.name,
+                        note=note.strip() if note else None,
+                        created_by=interaction.user.id,
+                    )
+                )
+            else:
+                existing.region_name_snapshot = region.name
+                existing.note = note.strip() if note else None
+                existing.created_by = interaction.user.id
+            guild_config = await session.get(GuildConfig, bot.settings.discord_guild_id)
+
+        if guild_config and guild_config.alert_channel_id:
+            await bot.alert_service.send_to_channel(
+                guild_config.alert_channel_id,
+                f"Recommendation region ignored: {region.name}.",
+            )
+        await bot.refresh_due_embeds(force_all=True)
+        await interaction.followup.send("Region ignored and embeds refreshed.", ephemeral=True)
+
+    @app_commands.command(
+        name="unignore_region",
+        description="Allow an ignored region back into automatic recommendations.",
+    )
+    @app_commands.autocomplete(location_identifier=autocomplete_regions)
+    async def unignore_region(
+        interaction: discord.Interaction,
+        location_identifier: str,
+    ) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        async with bot.session_factory.session() as session:
+            existing = await session.get(
+                IgnoredRecommendationRegion,
+                {
+                    "guild_id": bot.settings.discord_guild_id,
+                    "region_id": location_identifier.strip(),
+                },
+            )
+            if existing is None:
+                await interaction.followup.send(
+                    "That region is not currently ignored.",
+                    ephemeral=True,
+                )
+                return
+            region_name = existing.region_name_snapshot
+            await session.delete(existing)
+            guild_config = await session.get(GuildConfig, bot.settings.discord_guild_id)
+
+        if guild_config and guild_config.alert_channel_id:
+            await bot.alert_service.send_to_channel(
+                guild_config.alert_channel_id,
+                f"Recommendation region restored: {region_name}.",
+            )
+        await bot.refresh_due_embeds(force_all=True)
+        await interaction.followup.send("Ignored region removed and embeds refreshed.", ephemeral=True)
+
+    @app_commands.command(
+        name="list_ignored_regions",
+        description="List regions currently ignored by automatic recommendations.",
+    )
+    async def list_ignored_regions(interaction: discord.Interaction) -> None:
+        if not await require_read_only_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+            session_factory=bot.session_factory,
+        ):
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        async with bot.session_factory.session() as session:
+            records = list(
+                await session.scalars(
+                    select(IgnoredRecommendationRegion)
+                    .where(IgnoredRecommendationRegion.guild_id == bot.settings.discord_guild_id)
+                    .order_by(IgnoredRecommendationRegion.region_name_snapshot)
+                )
+            )
+
+        embed = discord.Embed(title="Ignored Recommendation Regions")
+        if not records:
+            embed.description = "No ignored regions configured."
+        else:
+            lines = []
+            for record in records:
+                line = f"- {record.region_name_snapshot} (`{record.region_id}`)"
+                if record.note:
+                    line = f"{line} - {record.note}"
+                lines.append(line)
+            embed.description = "\n".join(lines)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(
         name="show_recommended_regions",
         description="Show the current recommended locations embed from cached data.",
     )
@@ -264,6 +406,9 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         set_location_recommendation,
         remove_location_recommendation,
         show_recommended_regions,
+        ignore_recommendation_region,
+        unignore_region,
+        list_ignored_regions,
         start_list_recommended_region,
         refresh_list_recommended_region,
         stop_list_recommended_region,

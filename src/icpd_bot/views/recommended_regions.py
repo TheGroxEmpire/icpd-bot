@@ -56,9 +56,15 @@ ITEM_DISPLAY_NAMES: dict[str, str] = {
 
 
 def country_flag(code: str | None) -> str:
-    if not code or len(code) != 2 or not code.isalpha():
+    if not code:
         return ""
-    return "".join(chr(127397 + ord(char.upper())) for char in code)
+    normalized_code = code.strip().lower()
+    normalized_code = {
+        "uk": "gb",
+    }.get(normalized_code, normalized_code)
+    if len(normalized_code) != 2 or not normalized_code.isalpha():
+        return ""
+    return "".join(chr(127397 + ord(char.upper())) for char in normalized_code)
 
 
 def region_link(region_id: str) -> str:

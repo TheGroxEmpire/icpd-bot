@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from icpd_bot.db.base import Base
-from icpd_bot.db.models import SyncState, WareraCountryCache
+from icpd_bot.db.models import SyncState, WareraCountryCache, WareraRegionCache
 from icpd_bot.services.warera_sync import WareraSyncService
 
 
@@ -49,3 +49,38 @@ async def test_sync_stores_country_active_population() -> None:
     assert country is not None
     assert country.active_population == 13
     assert sync_state is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_removes_stale_regions_not_returned_by_upstream() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        session.add(
+            WareraRegionCache(
+                region_id="stale-region",
+                code="stale-region",
+                name="Stale Region",
+                country_id="country-1",
+                initial_country_id="country-1",
+                resistance=None,
+                resistance_max=None,
+                development=0.0,
+                strategic_resource=None,
+                raw_payload="{}",
+            )
+        )
+        await session.commit()
+
+        counts = await WareraSyncService(session, FakeWareraClient()).sync()
+        await session.commit()
+
+        region = await session.get(WareraRegionCache, "stale-region")
+
+    await engine.dispose()
+
+    assert counts.regions == 0
+    assert region is None

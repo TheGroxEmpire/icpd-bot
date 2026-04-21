@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from icpd_bot.db.models import (
@@ -41,6 +41,15 @@ class WareraSyncService:
         countries = await self.client.get_all_countries()
         regions = await self.client.get_regions_object()
         specialization_changes: list[str] = []
+        live_country_ids = {self._as_id(payload["_id"]) for payload in countries}
+        live_region_ids = {self._as_id(region_id) for region_id in regions}
+
+        await self.session.execute(
+            delete(WareraCountryCache).where(WareraCountryCache.country_id.not_in(live_country_ids))
+        )
+        await self.session.execute(
+            delete(WareraRegionCache).where(WareraRegionCache.region_id.not_in(live_region_ids))
+        )
 
         for payload in countries:
             country_id = self._as_id(payload["_id"])

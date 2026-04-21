@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from icpd_bot.db.base import Base
 from icpd_bot.db.models import (
+    IgnoredRecommendationRegion,
     IcpdProxy,
     LocationRecommendation,
     SanctionedCountry,
@@ -13,7 +14,7 @@ from icpd_bot.db.models import (
     WareraRegionCache,
 )
 from icpd_bot.services.recommendations import RecommendationEntry, RecommendationService
-from icpd_bot.views.recommended_regions import discord_timestamp
+from icpd_bot.views.recommended_regions import build_recommended_regions_embed, country_flag, discord_timestamp
 
 
 def build_region(
@@ -64,6 +65,40 @@ def test_limited_sanction_fallback_prefers_proxy_origin_regions() -> None:
     )
 
     assert [region.region_id for region in regions] == ["A1"]
+
+
+def test_country_flag_maps_uk_to_gb_emoji() -> None:
+    assert country_flag("uk") == "🇬🇧"
+
+
+def test_recommended_regions_embed_links_regions_by_id() -> None:
+    embed = build_recommended_regions_embed(
+        [
+            RecommendationEntry(
+                good_type="limestone",
+                location_name="South Georgia",
+                location_code="uk-south-georgia",
+                location_identifier="696a81f5882256e1db118228",
+                country_id="country-1",
+                country_name="South Africa",
+                country_code="za",
+                source_country_id="country-2",
+                source_country_name="United Kingdom",
+                source_country_code="uk",
+                ownership_statuses=("cooperator", "occupied"),
+                production_bonus_percent=63.0,
+                deposit_bonus_percent=None,
+                deposit_ends_at=None,
+                resistance_display=None,
+                development=None,
+                source="automatic",
+                note="Occupied territory of ICPD-aligned country United Kingdom.",
+            )
+        ]
+    )
+
+    assert "https://app.warera.io/region/696a81f5882256e1db118228" in embed.fields[0].value
+    assert "🇬🇧 United Kingdom" in embed.fields[0].value
 
 
 def test_limited_sanction_fallback_uses_highest_resistance_when_no_icpd_alignment() -> None:
@@ -773,3 +808,76 @@ async def test_build_recommendations_keeps_signal_pick_when_it_has_highest_bonus
     assert len(entries) == 1
     assert entries[0].location_identifier == "occupied-1"
     assert entries[0].note == "Occupied territory of ICPD-aligned country Proxy."
+
+
+@pytest.mark.asyncio
+async def test_build_recommendations_skips_ignored_deposit_region() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        session.add_all(
+            [
+                WareraCountryCache(
+                    country_id="specialist-1",
+                    code="sp",
+                    name="Specialist",
+                    production_specialization="oil",
+                    raw_payload='{"specializedItem":"oil","rankings":{"countryProductionBonus":{"value":20}}}',
+                ),
+                WareraCountryCache(
+                    country_id="neutral-1",
+                    code="ne",
+                    name="Neutral",
+                    production_specialization=None,
+                    raw_payload='{"rulingParty":"party-1"}',
+                ),
+                WareraPartyCache(
+                    party_id="party-1",
+                    name="Agrarian",
+                    country_id="neutral-1",
+                    industrialism=-2,
+                    raw_payload=None,
+                ),
+                WareraRegionCache(
+                    region_id="specialist-1",
+                    code="sp-1",
+                    name="Specialist Region",
+                    country_id="specialist-1",
+                    initial_country_id="specialist-1",
+                    resistance=None,
+                    resistance_max=None,
+                    development=1.0,
+                    strategic_resource=None,
+                    raw_payload="{}",
+                ),
+                WareraRegionCache(
+                    region_id="deposit-1",
+                    code="dep-1",
+                    name="Deposit",
+                    country_id="neutral-1",
+                    initial_country_id="neutral-1",
+                    resistance=None,
+                    resistance_max=None,
+                    development=1.0,
+                    strategic_resource=None,
+                    raw_payload='{"deposit":{"type":"oil","bonusPercent":30}}',
+                ),
+                IgnoredRecommendationRegion(
+                    guild_id=1,
+                    region_id="deposit-1",
+                    region_name_snapshot="Deposit",
+                    note="Depletes too soon",
+                    created_by=1,
+                ),
+            ]
+        )
+        await session.commit()
+
+        entries = await RecommendationService(session).build_recommendations(1)
+
+    await engine.dispose()
+
+    assert entries == []
