@@ -34,6 +34,8 @@ class RecommendationEntry:
     source_country_code: str | None
     ownership_statuses: tuple[str, ...]
     production_bonus_percent: float | None
+    deposit_bonus_percent: float | None
+    deposit_ends_at: datetime | None
     resistance_display: str | None
     development: float | None
     source: str
@@ -90,22 +92,58 @@ class RecommendationService:
         for good_type in sorted(goods):
             if good_type in manual_by_good:
                 record = manual_by_good[good_type]
+                region = next((cached_region for cached_region in regions if cached_region.region_id == record.location_identifier), None)
+                country = countries_by_id.get(region.country_id) if region else None
+                source_country = (
+                    countries_by_id.get(region.initial_country_id)
+                    if region and region.initial_country_id and region.initial_country_id != region.country_id
+                    else None
+                )
+                ownership_statuses = (
+                    self._ownership_statuses(
+                        region=region,
+                        icpd_country_ids=icpd_country_ids,
+                        proxy_country_ids=proxy_country_ids,
+                        cooperator_country_ids=cooperator_country_ids,
+                    )
+                    if region
+                    else ("manual",)
+                )
+                if "manual" not in ownership_statuses:
+                    ownership_statuses = ("manual", *ownership_statuses)
+                production_bonus_percent = None
+                deposit_bonus_percent = None
+                deposit_ends_at = None
+                resistance_display = None
+                development = None
+                if region:
+                    deposit_bonus_percent, deposit_ends_at = self._deposit_details(region, good_type)
+                    production_bonus_percent = self._total_production_bonus_percent(
+                        country=country,
+                        region=region,
+                        party=parties_by_id.get(self._ruling_party_id(country)),
+                        specialization=good_type,
+                    )
+                    resistance_display = self._resistance_display(region)
+                    development = region.development
                 results.append(
                     RecommendationEntry(
                         good_type=good_type,
                         location_name=record.location_name_snapshot,
-                        location_code=record.location_identifier,
+                        location_code=region.code if region else record.location_identifier,
                         location_identifier=record.location_identifier,
-                        country_id=None,
-                        country_name="Council override",
-                        country_code=None,
-                        source_country_id=None,
-                        source_country_name=None,
-                        source_country_code=None,
-                        ownership_statuses=("manual",),
-                        production_bonus_percent=None,
-                        resistance_display=None,
-                        development=None,
+                        country_id=region.country_id if region else None,
+                        country_name=country.name if country else "Council override",
+                        country_code=country.code if country else None,
+                        source_country_id=source_country.country_id if source_country else None,
+                        source_country_name=source_country.name if source_country else None,
+                        source_country_code=source_country.code if source_country else None,
+                        ownership_statuses=ownership_statuses,
+                        production_bonus_percent=production_bonus_percent,
+                        deposit_bonus_percent=deposit_bonus_percent,
+                        deposit_ends_at=deposit_ends_at,
+                        resistance_display=resistance_display,
+                        development=development,
                         source="manual",
                         note=record.recommendation_note or "Council override",
                     )
@@ -148,30 +186,17 @@ class RecommendationService:
                 source_country = countries_by_id.get(region.initial_country_id) if (
                     region.initial_country_id and region.initial_country_id != region.country_id
                 ) else None
-                current_sanction = sanctions_by_id.get(region.country_id)
-                source_sanction = sanctions_by_id.get(region.initial_country_id) if region.initial_country_id else None
-                should_include, note = self._recommendation_visibility(
-                    good_type=good_type,
-                    region=region,
-                    country=country,
-                    current_sanction=current_sanction,
-                    source_country=source_country,
-                    source_sanction=source_sanction,
-                    icpd_country_ids=icpd_country_ids,
-                    cooperator_country_ids=cooperator_country_ids,
-                    proxy_country_ids=proxy_country_ids,
-                )
-                if not should_include:
-                    continue
                 if production_bonus_percent <= 0.0:
                     continue
+                deposit_bonus_percent, deposit_ends_at = self._deposit_details(region, good_type)
                 scored_regions.append(
                     (
                         region,
                         country,
                         production_bonus_percent,
                         source_country,
-                        note,
+                        deposit_bonus_percent,
+                        deposit_ends_at,
                     )
                 )
             if not scored_regions:
@@ -186,7 +211,29 @@ class RecommendationService:
                     proxy_country_ids=proxy_country_ids,
                 ),
             )
-            region, country, production_bonus_percent, sanctioned_source_country, note = best_region
+            (
+                region,
+                country,
+                production_bonus_percent,
+                sanctioned_source_country,
+                deposit_bonus_percent,
+                deposit_ends_at,
+            ) = best_region
+            current_sanction = sanctions_by_id.get(region.country_id)
+            source_sanction = sanctions_by_id.get(region.initial_country_id) if region.initial_country_id else None
+            should_include, note = self._recommendation_visibility(
+                good_type=good_type,
+                region=region,
+                country=country,
+                current_sanction=current_sanction,
+                source_country=sanctioned_source_country,
+                source_sanction=source_sanction,
+                icpd_country_ids=icpd_country_ids,
+                cooperator_country_ids=cooperator_country_ids,
+                proxy_country_ids=proxy_country_ids,
+            )
+            if not should_include:
+                continue
             ownership_statuses = self._ownership_statuses(
                 region=region,
                 icpd_country_ids=icpd_country_ids,
@@ -208,6 +255,8 @@ class RecommendationService:
                     source_country_code=sanctioned_source_country.code if sanctioned_source_country else None,
                     ownership_statuses=ownership_statuses,
                     production_bonus_percent=production_bonus_percent,
+                    deposit_bonus_percent=deposit_bonus_percent,
+                    deposit_ends_at=deposit_ends_at,
                     resistance_display=resistance_display,
                     development=region.development,
                     source="automatic",
@@ -765,6 +814,23 @@ class RecommendationService:
             return 0.0
         base = cls._normalize_bonus_percent(deposit.get("bonusPercent"))
         return round(base + cls._party_deposit_bonus_pct(party, deposit_item), 6)
+
+    @classmethod
+    def _deposit_details(
+        cls,
+        region: WareraRegionCache,
+        specialization: str,
+    ) -> tuple[float | None, datetime | None]:
+        payload = cls._load_payload(region.raw_payload)
+        deposit = payload.get("deposit")
+        if not isinstance(deposit, dict):
+            return None, None
+        deposit_item = cls._resolve_material_id(deposit.get("type"))
+        if deposit_item != cls._resolve_material_id(specialization):
+            return None, None
+        if not cls._is_deposit_active(deposit):
+            return None, None
+        return cls._normalize_bonus_percent(deposit.get("bonusPercent")), cls._parse_datetime(deposit.get("endsAt"))
 
     @classmethod
     def _total_production_bonus_percent(

@@ -1,5 +1,19 @@
-from icpd_bot.db.models import SanctionedCountry, WareraCountryCache, WareraPartyCache, WareraRegionCache
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from icpd_bot.db.base import Base
+from icpd_bot.db.models import (
+    IcpdProxy,
+    LocationRecommendation,
+    SanctionedCountry,
+    WareraCountryCache,
+    WareraPartyCache,
+    WareraRegionCache,
+)
 from icpd_bot.services.recommendations import RecommendationEntry, RecommendationService
+from icpd_bot.views.recommended_regions import discord_timestamp
 
 
 def build_region(
@@ -372,6 +386,8 @@ def test_recommendation_entry_can_store_source_country_metadata() -> None:
         source_country_code="bn",
         ownership_statuses=("proxy", "occupied"),
         production_bonus_percent=60.0,
+        deposit_bonus_percent=30.0,
+        deposit_ends_at=datetime.now(timezone.utc),
         resistance_display="10 / 10 (40.0% hijacked tax)",
         development=1.0,
         source="automatic",
@@ -380,6 +396,13 @@ def test_recommendation_entry_can_store_source_country_metadata() -> None:
 
     assert entry.source_country_name == "Brunei"
     assert entry.source_country_code == "bn"
+
+
+def test_discord_timestamp_uses_unix_epoch() -> None:
+    countdown = discord_timestamp(datetime(2026, 4, 21, 15, 2, 10, tzinfo=timezone.utc))
+
+    assert countdown is not None
+    assert countdown == "<t:1776783730:R>"
 
 
 def test_recommendation_sort_key_prefers_higher_resistance_for_occupied_regions() -> None:
@@ -507,3 +530,246 @@ def test_mysterious_plant_deposit_bonus_outranks_weak_specialist_bonus() -> None
 
     assert specialist_score == 5.5
     assert deposit_score == 60.0
+
+
+@pytest.mark.asyncio
+async def test_build_recommendations_manual_override_keeps_region_country_and_bonus_metadata() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        session.add_all(
+            [
+                WareraCountryCache(
+                    country_id="holder-1",
+                    code="vn",
+                    name="Vietnam",
+                    production_specialization=None,
+                    raw_payload='{"rulingParty":"party-1"}',
+                ),
+                WareraCountryCache(
+                    country_id="proxy-1",
+                    code="bn",
+                    name="Brunei",
+                    production_specialization="grain",
+                    raw_payload=None,
+                ),
+                WareraPartyCache(
+                    party_id="party-1",
+                    name="Agrarian",
+                    country_id="holder-1",
+                    industrialism=-2,
+                    raw_payload=None,
+                ),
+                WareraRegionCache(
+                    region_id="region-1",
+                    code="bn-brunei",
+                    name="Brunei",
+                    country_id="holder-1",
+                    initial_country_id="proxy-1",
+                    resistance=10,
+                    resistance_max=10,
+                    development=1.0,
+                    strategic_resource=None,
+                    raw_payload=(
+                        '{"deposit":{"type":"grain","bonusPercent":30,'
+                        f'"endsAt":"{(datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()}"}}'
+                    ),
+                ),
+                LocationRecommendation(
+                    guild_id=1,
+                    good_type="grain",
+                    location_identifier="region-1",
+                    location_name_snapshot="Brunei",
+                    recommendation_note="Council override",
+                    updated_by=123,
+                ),
+            ]
+        )
+        await session.commit()
+
+        entries = await RecommendationService(session).build_recommendations(1)
+
+    await engine.dispose()
+
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.source == "manual"
+    assert entry.location_code == "bn-brunei"
+    assert entry.country_id == "holder-1"
+    assert entry.country_name == "Vietnam"
+    assert entry.country_code == "vn"
+    assert entry.source_country_id == "proxy-1"
+    assert entry.source_country_name == "Brunei"
+    assert entry.source_country_code == "bn"
+    assert entry.production_bonus_percent == 60.0
+    assert entry.deposit_bonus_percent == 30.0
+    assert entry.deposit_ends_at is not None
+    assert entry.resistance_display == "10 / 10 (40.0% hijacked tax)"
+    assert entry.ownership_statuses == ("manual", "proxy", "occupied")
+
+
+@pytest.mark.asyncio
+async def test_build_recommendations_hides_lower_signal_pick_when_neutral_deposit_has_higher_bonus() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        session.add_all(
+            [
+                IcpdProxy(
+                    country_id="proxy-1",
+                    country_code="pr",
+                    country_name_snapshot="Proxy",
+                    overlord_country_id="icpd-1",
+                    overlord_country_name_snapshot="ICPD",
+                    created_by=1,
+                ),
+                WareraCountryCache(
+                    country_id="proxy-1",
+                    code="pr",
+                    name="Proxy",
+                    production_specialization="oil",
+                    raw_payload='{"specializedItem":"oil","rankings":{"countryProductionBonus":{"value":20}}}',
+                ),
+                WareraCountryCache(
+                    country_id="holder-1",
+                    code="ho",
+                    name="Holder",
+                    production_specialization=None,
+                    raw_payload=None,
+                ),
+                WareraCountryCache(
+                    country_id="neutral-1",
+                    code="ne",
+                    name="Neutral",
+                    production_specialization=None,
+                    raw_payload='{"rulingParty":"party-1"}',
+                ),
+                WareraPartyCache(
+                    party_id="party-1",
+                    name="Agrarian",
+                    country_id="neutral-1",
+                    industrialism=-2,
+                    raw_payload=None,
+                ),
+                WareraRegionCache(
+                    region_id="occupied-1",
+                    code="occ-1",
+                    name="Occupied",
+                    country_id="holder-1",
+                    initial_country_id="proxy-1",
+                    resistance=40,
+                    resistance_max=100,
+                    development=1.0,
+                    strategic_resource=None,
+                    raw_payload="{}",
+                ),
+                WareraRegionCache(
+                    region_id="deposit-1",
+                    code="dep-1",
+                    name="Deposit",
+                    country_id="neutral-1",
+                    initial_country_id="neutral-1",
+                    resistance=None,
+                    resistance_max=None,
+                    development=1.0,
+                    strategic_resource=None,
+                    raw_payload='{"deposit":{"type":"oil","bonusPercent":30}}',
+                ),
+            ]
+        )
+        await session.commit()
+
+        entries = await RecommendationService(session).build_recommendations(1)
+
+    await engine.dispose()
+
+    assert entries == []
+
+
+@pytest.mark.asyncio
+async def test_build_recommendations_keeps_signal_pick_when_it_has_highest_bonus() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        session.add_all(
+            [
+                IcpdProxy(
+                    country_id="proxy-1",
+                    country_code="pr",
+                    country_name_snapshot="Proxy",
+                    overlord_country_id="icpd-1",
+                    overlord_country_name_snapshot="ICPD",
+                    created_by=1,
+                ),
+                WareraCountryCache(
+                    country_id="proxy-1",
+                    code="pr",
+                    name="Proxy",
+                    production_specialization="oil",
+                    raw_payload='{"specializedItem":"oil","rankings":{"countryProductionBonus":{"value":70}}}',
+                ),
+                WareraCountryCache(
+                    country_id="holder-1",
+                    code="ho",
+                    name="Holder",
+                    production_specialization=None,
+                    raw_payload=None,
+                ),
+                WareraCountryCache(
+                    country_id="neutral-1",
+                    code="ne",
+                    name="Neutral",
+                    production_specialization=None,
+                    raw_payload='{"rulingParty":"party-1"}',
+                ),
+                WareraPartyCache(
+                    party_id="party-1",
+                    name="Agrarian",
+                    country_id="neutral-1",
+                    industrialism=-2,
+                    raw_payload=None,
+                ),
+                WareraRegionCache(
+                    region_id="occupied-1",
+                    code="occ-1",
+                    name="Occupied",
+                    country_id="holder-1",
+                    initial_country_id="proxy-1",
+                    resistance=40,
+                    resistance_max=100,
+                    development=1.0,
+                    strategic_resource=None,
+                    raw_payload="{}",
+                ),
+                WareraRegionCache(
+                    region_id="deposit-1",
+                    code="dep-1",
+                    name="Deposit",
+                    country_id="neutral-1",
+                    initial_country_id="neutral-1",
+                    resistance=None,
+                    resistance_max=None,
+                    development=1.0,
+                    strategic_resource=None,
+                    raw_payload='{"deposit":{"type":"oil","bonusPercent":30}}',
+                ),
+            ]
+        )
+        await session.commit()
+
+        entries = await RecommendationService(session).build_recommendations(1)
+
+    await engine.dispose()
+
+    assert len(entries) == 1
+    assert entries[0].location_identifier == "occupied-1"
+    assert entries[0].note == "Occupied territory of ICPD-aligned country Proxy."

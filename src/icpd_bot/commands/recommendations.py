@@ -20,13 +20,7 @@ async def autocomplete_goods(
     search = current.strip().lower()
     async with interaction.client.session_factory.session() as session:  # type: ignore[attr-defined]
         countries = list(await session.scalars(select(WareraCountryCache)))
-        regions = list(await session.scalars(select(WareraRegionCache)))
-    goods = sorted(
-        {
-            *(country.production_specialization for country in countries if country.production_specialization),
-            *(region.strategic_resource for region in regions if region.strategic_resource),
-        }
-    )
+    goods = sorted({country.production_specialization for country in countries if country.production_specialization})
     if search:
         goods = [good for good in goods if search in good.lower()]
     return [app_commands.Choice(name=good, value=good) for good in goods[:25]]

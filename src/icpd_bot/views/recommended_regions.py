@@ -93,12 +93,20 @@ def status_badges(statuses: tuple[str, ...]) -> str:
     return " ".join(status_badge(status) for status in statuses)
 
 
+def discord_timestamp(value: datetime | None, style: str = "R") -> str | None:
+    if value is None:
+        return None
+    return f"<t:{int(value.astimezone(timezone.utc).timestamp())}:{style}>"
+
+
 def build_recommended_regions_embed(entries: list[RecommendationEntry]) -> discord.Embed:
     embed = discord.Embed(
         title="Recommended Item Locations",
         description=(
             "Current high-signal recommendations only: council overrides, sanction-driven "
-            "fallbacks, and occupied territory for ICPD-aligned specialists."
+            "fallbacks, and occupied territory for ICPD-aligned specialists.\n\n"
+            "Legend: 🟨 ICPD council override, 🟩 ICPD country, 🟦 ICPD proxy, 🟪 ICPD cooperator, "
+            "🟥 Occupied territory, ⬜ Other."
         ),
         timestamp=datetime.now(timezone.utc),
     )
@@ -133,6 +141,17 @@ def build_recommended_regions_embed(entries: list[RecommendationEntry]) -> disco
             extra_lines.append(source_label)
         if entry.production_bonus_percent is not None:
             extra_lines.append(f"Bonus: {entry.production_bonus_percent:.2f}%")
+        else:
+            extra_lines.append("\u200b")
+        if entry.deposit_bonus_percent is not None:
+            deposit_line = f"Deposit: +{entry.deposit_bonus_percent:.2f}%"
+            countdown = discord_timestamp(entry.deposit_ends_at, "R")
+            exact_time = discord_timestamp(entry.deposit_ends_at, "t")
+            if countdown and exact_time:
+                deposit_line = f"{deposit_line} depletes {countdown} ({exact_time})"
+            elif countdown:
+                deposit_line = f"{deposit_line} depletes {countdown}"
+            extra_lines.append(deposit_line)
         else:
             extra_lines.append("\u200b")
         if entry.resistance_display is not None:
