@@ -53,6 +53,7 @@ class WareraSyncService:
             record.code = str(payload.get("code", "")).lower()
             record.name = str(payload.get("name", ""))
             record.production_specialization = self._string_or_none(payload.get("specializedItem"))
+            record.active_population = self._extract_active_population(payload)
             record.raw_payload = json.dumps(payload, separators=(",", ":"), default=str)
             record.fetched_at = datetime.now(timezone.utc)
 
@@ -211,6 +212,16 @@ class WareraSyncService:
             return None
         text = str(value).strip()
         return text or None
+
+    @classmethod
+    def _extract_active_population(cls, payload: dict[str, object]) -> int | None:
+        rankings = payload.get("rankings")
+        if not isinstance(rankings, dict):
+            return None
+        active_population = rankings.get("countryActivePopulation")
+        if not isinstance(active_population, dict):
+            return None
+        return cls._to_optional_int(active_population.get("value"))
 
     @staticmethod
     def _chunked(values: list[str], size: int) -> list[list[str]]:

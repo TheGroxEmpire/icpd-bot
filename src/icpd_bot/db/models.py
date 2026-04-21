@@ -74,6 +74,17 @@ class IcpdProxy(Base, TimestampMixin):
     created_by: Mapped[int] = mapped_column(BigInteger)
 
 
+class HostileProxy(Base, TimestampMixin):
+    __tablename__ = "hostile_proxies"
+
+    country_id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    country_code: Mapped[str] = mapped_column(String(32), index=True)
+    country_name_snapshot: Mapped[str] = mapped_column(String(255))
+    overlord_country_id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    overlord_country_name_snapshot: Mapped[str] = mapped_column(String(255))
+    created_by: Mapped[int] = mapped_column(BigInteger)
+
+
 class LocationRecommendation(Base):
     __tablename__ = "location_recommendations"
 
@@ -117,6 +128,7 @@ class WareraCountryCache(Base):
     code: Mapped[str] = mapped_column(String(32), index=True)
     name: Mapped[str] = mapped_column(String(255))
     production_specialization: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    active_population: Mapped[int | None] = mapped_column(Integer, nullable=True)
     raw_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
