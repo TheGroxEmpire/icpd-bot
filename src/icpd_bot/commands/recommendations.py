@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import discord
@@ -6,6 +7,7 @@ from sqlalchemy import delete, or_, select
 
 from icpd_bot.db.models import (
     GuildConfig,
+    IgnoredRecommendationDeposit,
     IgnoredRecommendationRegion,
     LocationRecommendation,
     WareraCountryCache,
@@ -233,6 +235,176 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         await interaction.followup.send("Region ignored and embeds refreshed.", ephemeral=True)
 
     @app_commands.command(
+        name="ignore_region_deposit",
+        description="Temporarily ignore a deposit for one good in one region.",
+    )
+    @app_commands.autocomplete(
+        good_type=autocomplete_goods,
+        location_identifier=autocomplete_regions,
+    )
+    async def ignore_region_deposit(
+        interaction: discord.Interaction,
+        good_type: str,
+        location_identifier: str,
+        note: str | None = None,
+    ) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        normalized_good_type = good_type.strip()
+        await interaction.response.defer(ephemeral=True)
+        async with bot.session_factory.session() as session:
+            region = await session.get(WareraRegionCache, location_identifier.strip())
+            if region is None:
+                await interaction.followup.send(
+                    "Location not found in cache. Run `/sync_warera_cache` first.",
+                    ephemeral=True,
+                )
+                return
+            deposit_bonus_percent, expires_at = RecommendationService._deposit_details(region, normalized_good_type)
+            if deposit_bonus_percent is None or expires_at is None:
+                await interaction.followup.send(
+                    "That region does not currently have an active deposit for that good with a known end time.",
+                    ephemeral=True,
+                )
+                return
+            existing = await session.get(
+                IgnoredRecommendationDeposit,
+                {
+                    "guild_id": bot.settings.discord_guild_id,
+                    "region_id": location_identifier.strip(),
+                    "good_type": normalized_good_type,
+                },
+            )
+            if existing is None:
+                session.add(
+                    IgnoredRecommendationDeposit(
+                        guild_id=bot.settings.discord_guild_id,
+                        region_id=location_identifier.strip(),
+                        good_type=normalized_good_type,
+                        region_name_snapshot=region.name,
+                        note=note.strip() if note else None,
+                        expires_at=expires_at,
+                        created_by=interaction.user.id,
+                    )
+                )
+            else:
+                existing.region_name_snapshot = region.name
+                existing.note = note.strip() if note else None
+                existing.expires_at = expires_at
+                existing.created_by = interaction.user.id
+            guild_config = await session.get(GuildConfig, bot.settings.discord_guild_id)
+
+        if guild_config and guild_config.alert_channel_id:
+            await bot.alert_service.send_to_channel(
+                guild_config.alert_channel_id,
+                f"Deposit ignored for {normalized_good_type} in {region.name} until {expires_at.isoformat()}.",
+            )
+        await bot.refresh_due_embeds(force_all=True)
+        await interaction.followup.send("Region deposit ignored temporarily and embeds refreshed.", ephemeral=True)
+
+    @app_commands.command(
+        name="unignore_region_deposit",
+        description="Allow an ignored deposit back into recommendations.",
+    )
+    @app_commands.autocomplete(
+        good_type=autocomplete_goods,
+        location_identifier=autocomplete_regions,
+    )
+    async def unignore_region_deposit(
+        interaction: discord.Interaction,
+        good_type: str,
+        location_identifier: str,
+    ) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        normalized_good_type = good_type.strip()
+        await interaction.response.defer(ephemeral=True)
+        async with bot.session_factory.session() as session:
+            existing = await session.get(
+                IgnoredRecommendationDeposit,
+                {
+                    "guild_id": bot.settings.discord_guild_id,
+                    "region_id": location_identifier.strip(),
+                    "good_type": normalized_good_type,
+                },
+            )
+            if existing is None:
+                await interaction.followup.send(
+                    "That region deposit is not currently ignored.",
+                    ephemeral=True,
+                )
+                return
+            region_name = existing.region_name_snapshot
+            await session.delete(existing)
+            guild_config = await session.get(GuildConfig, bot.settings.discord_guild_id)
+
+        if guild_config and guild_config.alert_channel_id:
+            await bot.alert_service.send_to_channel(
+                guild_config.alert_channel_id,
+                f"Deposit restored for {normalized_good_type} in {region_name}.",
+            )
+        await bot.refresh_due_embeds(force_all=True)
+        await interaction.followup.send("Ignored region deposit removed and embeds refreshed.", ephemeral=True)
+
+    @app_commands.command(
+        name="list_ignored_region_deposits",
+        description="List temporarily ignored region deposits.",
+    )
+    async def list_ignored_region_deposits(interaction: discord.Interaction) -> None:
+        if not await require_read_only_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+            session_factory=bot.session_factory,
+        ):
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        async with bot.session_factory.session() as session:
+            records = list(
+                await session.scalars(
+                    select(IgnoredRecommendationDeposit)
+                    .where(IgnoredRecommendationDeposit.guild_id == bot.settings.discord_guild_id)
+                    .order_by(
+                        IgnoredRecommendationDeposit.region_name_snapshot,
+                        IgnoredRecommendationDeposit.good_type,
+                    )
+                )
+            )
+
+        now = datetime.now(timezone.utc)
+        embed = discord.Embed(title="Ignored Region Deposits")
+        active_records = [
+            record for record in records if record.expires_at is None or record.expires_at > now
+        ]
+        if not active_records:
+            embed.description = "No ignored region deposits configured."
+        else:
+            lines = []
+            for record in active_records:
+                expiry = (
+                    f" until <t:{int(record.expires_at.timestamp())}:R>"
+                    if record.expires_at is not None
+                    else ""
+                )
+                line = f"- {record.region_name_snapshot} / `{record.good_type}`{expiry}"
+                if record.note:
+                    line = f"{line} - {record.note}"
+                lines.append(line)
+            embed.description = "\n".join(lines)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(
         name="unignore_region",
         description="Allow an ignored region back into automatic recommendations.",
     )
@@ -407,8 +579,11 @@ def build_recommendation_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         remove_location_recommendation,
         show_recommended_regions,
         ignore_recommendation_region,
+        ignore_region_deposit,
         unignore_region,
+        unignore_region_deposit,
         list_ignored_regions,
+        list_ignored_region_deposits,
         start_list_recommended_region,
         refresh_list_recommended_region,
         stop_list_recommended_region,

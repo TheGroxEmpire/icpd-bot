@@ -68,7 +68,9 @@ Important design rule:
 - `/set_location_recommendation`
 - `/remove_location_recommendation`
 - `/ignore_recommendation_region`
+- `/ignore_region_deposit`
 - `/unignore_region`
+- `/unignore_region_deposit`
 - `/sync_warera_cache`
 - `/start_list_recommended_region`
 - `/stop_list_recommended_region`
@@ -88,6 +90,7 @@ Important design rule:
 - `/list_hostile_proxies`
 - `/show_recommended_regions`
 - `/list_ignored_regions`
+- `/list_ignored_region_deposits`
 - `/bot_status`
 
 ## Planned Repository Layout

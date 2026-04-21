@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from icpd_bot.db.models import (
     CooperatorCountry,
+    IgnoredRecommendationDeposit,
     IgnoredRecommendationRegion,
     IcpdCountry,
     IcpdProxy,
@@ -78,6 +79,11 @@ class RecommendationService:
                 select(IgnoredRecommendationRegion).where(IgnoredRecommendationRegion.guild_id == guild_id)
             )
         )
+        ignored_deposits = list(
+            await self.session.scalars(
+                select(IgnoredRecommendationDeposit).where(IgnoredRecommendationDeposit.guild_id == guild_id)
+            )
+        )
 
         countries_by_id = {country.country_id: country for country in countries}
         parties_by_id = {party.party_id: party for party in parties}
@@ -86,6 +92,14 @@ class RecommendationService:
         cooperator_country_ids = {country.country_id for country in cooperators}
         icpd_country_ids = {country.country_id for country in await self.session.scalars(select(IcpdCountry))}
         ignored_region_ids = {record.region_id for record in ignored_regions}
+        active_ignored_deposit_keys = {
+            (record.region_id, self._resolve_material_id(record.good_type))
+            for record in ignored_deposits
+            if (
+                self._resolve_material_id(record.good_type) is not None
+                and (record.expires_at is None or record.expires_at > datetime.now(timezone.utc))
+            )
+        }
         manual_by_good: dict[str, LocationRecommendation] = {}
         for record in manual:
             manual_by_good.setdefault(record.good_type, record)
@@ -166,6 +180,7 @@ class RecommendationService:
                 cooperator_country_ids=cooperator_country_ids,
                 proxy_country_ids=proxy_country_ids,
                 ignored_region_ids=ignored_region_ids,
+                ignored_region_deposit_keys=active_ignored_deposit_keys,
             )
             eligible_regions = [
                 region
@@ -190,13 +205,18 @@ class RecommendationService:
                     region=region,
                     party=parties_by_id.get(self._ruling_party_id(country)),
                     specialization=good_type,
+                    ignored_region_deposit_keys=active_ignored_deposit_keys,
                 )
                 source_country = countries_by_id.get(region.initial_country_id) if (
                     region.initial_country_id and region.initial_country_id != region.country_id
                 ) else None
                 if production_bonus_percent <= 0.0:
                     continue
-                deposit_bonus_percent, deposit_ends_at = self._deposit_details(region, good_type)
+                deposit_bonus_percent, deposit_ends_at = self._deposit_details(
+                    region,
+                    good_type,
+                    ignored_region_deposit_keys=active_ignored_deposit_keys,
+                )
                 scored_regions.append(
                     (
                         region,
@@ -285,11 +305,14 @@ class RecommendationService:
         icpd_country_ids: set[str],
         cooperator_country_ids: set[str],
         proxy_country_ids: set[str],
-        ignored_region_ids: set[str],
+        ignored_region_ids: set[str] | None = None,
+        ignored_region_deposit_keys: set[tuple[str, str | None]] | None = None,
     ) -> list[WareraRegionCache]:
         normalized_good_type = cls._resolve_material_id(good_type)
         if not normalized_good_type:
             return []
+        ignored_region_ids = ignored_region_ids or set()
+        ignored_region_deposit_keys = ignored_region_deposit_keys or set()
 
         limited_sanction_country_ids = {
             country_id
@@ -346,7 +369,11 @@ class RecommendationService:
                 and (
                     cls._resolve_material_id(countries_by_id[region.country_id].production_specialization)
                     == normalized_good_type
-                    or cls._region_matches_good(region, normalized_good_type)
+                    or cls._region_matches_good(
+                        region,
+                        normalized_good_type,
+                        ignored_region_deposit_keys=ignored_region_deposit_keys,
+                    )
                 )
                 and region.country_id not in fallback_country_ids
             )
@@ -461,7 +488,19 @@ class RecommendationService:
         return False, "Best eligible cached region."
 
     @classmethod
-    def _region_matches_good(cls, region: WareraRegionCache, good_type: str) -> bool:
+    def _region_matches_good(
+        cls,
+        region: WareraRegionCache,
+        good_type: str,
+        *,
+        ignored_region_deposit_keys: set[tuple[str, str | None]] | None = None,
+    ) -> bool:
+        if cls._is_region_deposit_ignored(
+            region.region_id,
+            good_type,
+            ignored_region_deposit_keys=ignored_region_deposit_keys,
+        ):
+            return False
         payload = cls._load_payload(region.raw_payload)
         if not payload:
             return False
@@ -811,7 +850,15 @@ class RecommendationService:
         region: WareraRegionCache,
         specialization: str,
         party: WareraPartyCache | None,
+        *,
+        ignored_region_deposit_keys: set[tuple[str, str | None]] | None = None,
     ) -> float:
+        if cls._is_region_deposit_ignored(
+            region.region_id,
+            specialization,
+            ignored_region_deposit_keys=ignored_region_deposit_keys,
+        ):
+            return 0.0
         payload = cls._load_payload(region.raw_payload)
         if not payload:
             return 0.0
@@ -833,7 +880,15 @@ class RecommendationService:
         cls,
         region: WareraRegionCache,
         specialization: str,
+        *,
+        ignored_region_deposit_keys: set[tuple[str, str | None]] | None = None,
     ) -> tuple[float | None, datetime | None]:
+        if cls._is_region_deposit_ignored(
+            region.region_id,
+            specialization,
+            ignored_region_deposit_keys=ignored_region_deposit_keys,
+        ):
+            return None, None
         payload = cls._load_payload(region.raw_payload)
         deposit = payload.get("deposit")
         if not isinstance(deposit, dict):
@@ -853,15 +908,33 @@ class RecommendationService:
         region: WareraRegionCache,
         party: WareraPartyCache | None,
         specialization: str,
+        ignored_region_deposit_keys: set[tuple[str, str | None]] | None = None,
     ) -> float:
         normalized_specialization = cls._resolve_material_id(specialization)
         if not normalized_specialization:
             return 0.0
         return round(
             cls._country_specialization_bonus_pct(country, normalized_specialization, party)
-            + cls._region_deposit_bonus_pct(region, normalized_specialization, party),
+            + cls._region_deposit_bonus_pct(
+                region,
+                normalized_specialization,
+                party,
+                ignored_region_deposit_keys=ignored_region_deposit_keys,
+            ),
             6,
         )
+
+    @classmethod
+    def _is_region_deposit_ignored(
+        cls,
+        region_id: str,
+        specialization: str | None,
+        *,
+        ignored_region_deposit_keys: set[tuple[str, str | None]] | None = None,
+    ) -> bool:
+        if ignored_region_deposit_keys is None:
+            return False
+        return (region_id, cls._resolve_material_id(specialization)) in ignored_region_deposit_keys
 
     @staticmethod
     def _load_payload(raw_payload: str | None) -> dict[str, object]:

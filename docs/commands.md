@@ -383,6 +383,30 @@ Response:
 
 - ephemeral confirmation
 
+### `/ignore_region_deposit`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `good_type`: autocomplete from cached goods
+- `location_identifier`: autocomplete from cached regions
+- `note`: optional free text
+
+Behavior:
+
+- temporarily ignores the deposit bonus for that specific good in that specific region
+- the ignore duration follows the current live deposit end time on that region
+- does not blacklist the whole region
+- requires the region to exist in cache
+- requires the region to currently have an active matching deposit with a known end time
+- refreshes managed recommendation embeds
+- sends an alert to the configured alert channel when one is set
+
+Response:
+
+- ephemeral confirmation
+
 ### `/unignore_region`
 
 Permission: `Council-only`
@@ -401,6 +425,25 @@ Response:
 
 - ephemeral confirmation or not-found message
 
+### `/unignore_region_deposit`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `good_type`: autocomplete from cached goods
+- `location_identifier`: autocomplete from cached regions
+
+Behavior:
+
+- removes a temporary deposit ignore entry for that region and good
+- refreshes managed recommendation embeds
+- sends an alert to the configured alert channel when one is set
+
+Response:
+
+- ephemeral confirmation or not-found message
+
 ### `/list_ignored_regions`
 
 Permission: `Read-only access`
@@ -409,6 +452,20 @@ Shows:
 
 - the regions currently excluded from automatic recommendations
 - any stored note explaining why they were ignored
+
+Response:
+
+- ephemeral embed
+
+### `/list_ignored_region_deposits`
+
+Permission: `Read-only access`
+
+Shows:
+
+- the region deposits currently excluded from automatic recommendations
+- the good each ignore applies to
+- when each ignore expires
 
 Response:
 

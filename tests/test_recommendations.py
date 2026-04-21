@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from icpd_bot.db.base import Base
 from icpd_bot.db.models import (
+    IgnoredRecommendationDeposit,
     IgnoredRecommendationRegion,
     IcpdProxy,
     LocationRecommendation,
@@ -101,6 +102,29 @@ def test_recommended_regions_embed_links_regions_by_id() -> None:
     assert "🇬🇧 United Kingdom" in embed.fields[0].value
 
 
+def test_deposit_details_returns_expiry_for_active_matching_deposit() -> None:
+    region = WareraRegionCache(
+        region_id="deposit-1",
+        code="dep-1",
+        name="Deposit",
+        country_id="neutral-1",
+        initial_country_id="neutral-1",
+        resistance=None,
+        resistance_max=None,
+        development=1.0,
+        strategic_resource=None,
+        raw_payload=(
+            '{"deposit":{"type":"oil","bonusPercent":30,'
+            f'"endsAt":"{(datetime.now(timezone.utc) + timedelta(hours=8)).isoformat()}"}}'
+        ),
+    )
+
+    deposit_bonus_percent, expires_at = RecommendationService._deposit_details(region, "oil")
+
+    assert deposit_bonus_percent == 30.0
+    assert expires_at is not None
+
+
 def test_limited_sanction_fallback_uses_highest_resistance_when_no_icpd_alignment() -> None:
     low_resistance = build_region(
         "B1",
@@ -186,6 +210,8 @@ def test_candidate_regions_replace_limited_sanction_home_regions_with_fallback()
         icpd_country_ids=set(),
         cooperator_country_ids=set(),
         proxy_country_ids=set(),
+        ignored_region_ids=set(),
+        ignored_region_deposit_keys=set(),
     )
 
     assert [region.region_id for region in candidates] == ["C2"]
@@ -230,6 +256,8 @@ def test_candidate_regions_replace_icpd_proxy_home_regions_with_occupied_fallbac
         icpd_country_ids=set(),
         cooperator_country_ids=set(),
         proxy_country_ids={"proxy-1"},
+        ignored_region_ids=set(),
+        ignored_region_deposit_keys=set(),
     )
 
     assert [region.region_id for region in candidates] == ["P2"]
@@ -881,3 +909,55 @@ async def test_build_recommendations_skips_ignored_deposit_region() -> None:
     await engine.dispose()
 
     assert entries == []
+
+
+@pytest.mark.asyncio
+async def test_build_recommendations_ignores_deposit_only_for_matching_region_good() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        session.add_all(
+            [
+                WareraCountryCache(
+                    country_id="specialist-1",
+                    code="sp",
+                    name="Specialist",
+                    production_specialization="oil",
+                    raw_payload='{"specializedItem":"oil","rankings":{"countryProductionBonus":{"value":20}}}',
+                ),
+                WareraRegionCache(
+                    region_id="specialist-1",
+                    code="sp-1",
+                    name="Specialist Region",
+                    country_id="specialist-1",
+                    initial_country_id="specialist-1",
+                    resistance=None,
+                    resistance_max=None,
+                    development=1.0,
+                    strategic_resource=None,
+                    raw_payload='{"deposit":{"type":"oil","bonusPercent":30}}',
+                ),
+                IgnoredRecommendationDeposit(
+                    guild_id=1,
+                    region_id="specialist-1",
+                    good_type="oil",
+                    region_name_snapshot="Specialist Region",
+                    note="Ignore short deposit",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=12),
+                    created_by=1,
+                ),
+            ]
+        )
+        await session.commit()
+
+        entries = await RecommendationService(session).build_recommendations(1)
+
+    await engine.dispose()
+
+    assert len(entries) == 1
+    assert entries[0].location_identifier == "specialist-1"
+    assert entries[0].production_bonus_percent == 20.0
+    assert entries[0].deposit_bonus_percent is None

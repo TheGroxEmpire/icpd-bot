@@ -116,6 +116,23 @@ class IgnoredRecommendationRegion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class IgnoredRecommendationDeposit(Base):
+    __tablename__ = "ignored_recommendation_deposits"
+
+    guild_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("guild_config.guild_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    region_id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    good_type: Mapped[str] = mapped_column(String(128), primary_key=True)
+    region_name_snapshot: Mapped[str] = mapped_column(String(255))
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class SpecializationAlertState(Base):
     __tablename__ = "specialization_alert_state"
 
