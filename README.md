@@ -61,10 +61,14 @@ Important design rule:
 - `/remove_icpd_country`
 - `/add_icpd_proxy`
 - `/add_hostile_proxy`
+- `/add_cooperator_proxy`
+- `/add_other_proxy`
 - `/add_cooperator_country`
 - `/remove_cooperator_country`
 - `/remove_icpd_proxy`
 - `/remove_hostile_proxy`
+- `/remove_cooperator_proxy`
+- `/remove_other_proxy`
 - `/set_location_recommendation`
 - `/remove_location_recommendation`
 - `/ignore_recommendation_region`
@@ -90,6 +94,8 @@ Important design rule:
 - `/list_cooperator_countries`
 - `/list_icpd_proxies`
 - `/list_hostile_proxies`
+- `/list_cooperator_proxies`
+- `/list_other_proxies`
 - `/show_recommended_regions`
 - `/list_ignored_regions`
 - `/list_ignored_region_deposits`

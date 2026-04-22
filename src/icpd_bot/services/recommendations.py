@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from icpd_bot.db.models import (
     CooperatorCountry,
+    CooperatorProxy,
     IgnoredRecommendationDeposit,
     IgnoredRecommendationRegion,
     IcpdCountry,
@@ -67,6 +68,7 @@ class RecommendationService:
         sanctions = list(await self.session.scalars(select(SanctionedCountry)))
         proxies = list(await self.session.scalars(select(IcpdProxy)))
         cooperators = list(await self.session.scalars(select(CooperatorCountry)))
+        cooperator_proxies = list(await self.session.scalars(select(CooperatorProxy)))
         manual = list(
             await self.session.scalars(
                 select(LocationRecommendation)
@@ -89,7 +91,9 @@ class RecommendationService:
         parties_by_id = {party.party_id: party for party in parties}
         sanctions_by_id = {country.country_id: country for country in sanctions}
         proxy_country_ids = {proxy.country_id for proxy in proxies}
-        cooperator_country_ids = {country.country_id for country in cooperators}
+        cooperator_country_ids = {country.country_id for country in cooperators} | {
+            proxy.country_id for proxy in cooperator_proxies
+        }
         icpd_country_ids = {country.country_id for country in await self.session.scalars(select(IcpdCountry))}
         ignored_region_ids = {record.region_id for record in ignored_regions}
         active_ignored_deposit_keys = {

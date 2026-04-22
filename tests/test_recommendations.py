@@ -7,6 +7,7 @@ from icpd_bot.db.base import Base
 from icpd_bot.db.models import (
     IgnoredRecommendationDeposit,
     IgnoredRecommendationRegion,
+    CooperatorProxy,
     IcpdProxy,
     LocationRecommendation,
     SanctionedCountry,
@@ -961,3 +962,59 @@ async def test_build_recommendations_ignores_deposit_only_for_matching_region_go
     assert entries[0].location_identifier == "specialist-1"
     assert entries[0].production_bonus_percent == 20.0
     assert entries[0].deposit_bonus_percent is None
+
+
+@pytest.mark.asyncio
+async def test_build_recommendations_treats_cooperator_proxy_as_cooperator_alignment() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        session.add_all(
+            [
+                CooperatorProxy(
+                    country_id="coop-proxy-1",
+                    country_code="cp",
+                    country_name_snapshot="Cooperator Proxy",
+                    overlord_country_id="coop-owner-1",
+                    overlord_country_name_snapshot="Cooperator Owner",
+                    created_by=1,
+                ),
+                WareraCountryCache(
+                    country_id="coop-proxy-1",
+                    code="cp",
+                    name="Cooperator Proxy",
+                    production_specialization="oil",
+                    raw_payload='{"specializedItem":"oil","rankings":{"countryProductionBonus":{"value":20}}}',
+                ),
+                WareraCountryCache(
+                    country_id="holder-1",
+                    code="ho",
+                    name="Holder",
+                    production_specialization=None,
+                    raw_payload=None,
+                ),
+                WareraRegionCache(
+                    region_id="occupied-1",
+                    code="occ-1",
+                    name="Occupied",
+                    country_id="holder-1",
+                    initial_country_id="coop-proxy-1",
+                    resistance=40,
+                    resistance_max=100,
+                    development=1.0,
+                    strategic_resource=None,
+                    raw_payload="{}",
+                ),
+            ]
+        )
+        await session.commit()
+
+        entries = await RecommendationService(session).build_recommendations(1)
+
+    await engine.dispose()
+
+    assert len(entries) == 1
+    assert entries[0].ownership_statuses == ("cooperator", "occupied")

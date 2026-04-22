@@ -60,6 +60,21 @@ class CooperatorCountry(Base, TimestampMixin):
     created_by: Mapped[int] = mapped_column(BigInteger)
 
 
+class CooperatorProxy(Base, TimestampMixin):
+    __tablename__ = "cooperator_proxies"
+
+    country_id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    country_code: Mapped[str] = mapped_column(String(32), index=True)
+    country_name_snapshot: Mapped[str] = mapped_column(String(255))
+    overlord_country_id: Mapped[str] = mapped_column(
+        String(24),
+        ForeignKey("cooperator_countries.country_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    overlord_country_name_snapshot: Mapped[str] = mapped_column(String(255))
+    created_by: Mapped[int] = mapped_column(BigInteger)
+
+
 class IcpdProxy(Base, TimestampMixin):
     __tablename__ = "icpd_proxies"
 
@@ -77,6 +92,17 @@ class IcpdProxy(Base, TimestampMixin):
 
 class HostileProxy(Base, TimestampMixin):
     __tablename__ = "hostile_proxies"
+
+    country_id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    country_code: Mapped[str] = mapped_column(String(32), index=True)
+    country_name_snapshot: Mapped[str] = mapped_column(String(255))
+    overlord_country_id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    overlord_country_name_snapshot: Mapped[str] = mapped_column(String(255))
+    created_by: Mapped[int] = mapped_column(BigInteger)
+
+
+class OtherProxy(Base, TimestampMixin):
+    __tablename__ = "other_proxies"
 
     country_id: Mapped[str] = mapped_column(String(24), primary_key=True)
     country_code: Mapped[str] = mapped_column(String(32), index=True)

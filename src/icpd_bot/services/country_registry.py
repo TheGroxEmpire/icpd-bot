@@ -3,7 +3,15 @@ from dataclasses import dataclass
 from sqlalchemy import Select, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from icpd_bot.db.models import CooperatorCountry, HostileProxy, IcpdCountry, IcpdProxy, SanctionedCountry
+from icpd_bot.db.models import (
+    CooperatorCountry,
+    CooperatorProxy,
+    HostileProxy,
+    IcpdCountry,
+    IcpdProxy,
+    OtherProxy,
+    SanctionedCountry,
+)
 
 
 @dataclass(slots=True)
@@ -117,6 +125,56 @@ class CooperatorCountryService:
         return list(await self.session.scalars(select(CooperatorCountry).order_by(CooperatorCountry.country_name_snapshot)))
 
 
+class CooperatorProxyService:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def upsert(
+        self,
+        country: CountryInput,
+        *,
+        overlord_country_id: str,
+        overlord_country_name: str,
+    ) -> CooperatorProxy:
+        record = await self.session.get(
+            CooperatorProxy,
+            {"country_id": country.country_id, "overlord_country_id": overlord_country_id},
+        )
+        if record is None:
+            record = CooperatorProxy(
+                country_id=country.country_id,
+                country_code=country.country_code.upper(),
+                country_name_snapshot=country.country_name,
+                overlord_country_id=overlord_country_id,
+                overlord_country_name_snapshot=overlord_country_name,
+                created_by=country.actor_id,
+            )
+            self.session.add(record)
+            return record
+
+        record.country_code = country.country_code.upper()
+        record.country_name_snapshot = country.country_name
+        record.overlord_country_name_snapshot = overlord_country_name
+        return record
+
+    async def remove(self, country_id: str, overlord_country_id: str | None = None) -> bool:
+        statement = delete(CooperatorProxy).where(CooperatorProxy.country_id == country_id)
+        if overlord_country_id is not None:
+            statement = statement.where(CooperatorProxy.overlord_country_id == overlord_country_id)
+        result = await self.session.execute(statement)
+        return result.rowcount > 0
+
+    async def list_all(self) -> list[CooperatorProxy]:
+        return list(
+            await self.session.scalars(
+                select(CooperatorProxy).order_by(
+                    CooperatorProxy.country_name_snapshot,
+                    CooperatorProxy.overlord_country_name_snapshot,
+                )
+            )
+        )
+
+
 class IcpdProxyService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -212,6 +270,56 @@ class HostileProxyService:
                 select(HostileProxy).order_by(
                     HostileProxy.country_name_snapshot,
                     HostileProxy.overlord_country_name_snapshot,
+                )
+            )
+        )
+
+
+class OtherProxyService:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def upsert(
+        self,
+        country: CountryInput,
+        *,
+        overlord_country_id: str,
+        overlord_country_name: str,
+    ) -> OtherProxy:
+        record = await self.session.get(
+            OtherProxy,
+            {"country_id": country.country_id, "overlord_country_id": overlord_country_id},
+        )
+        if record is None:
+            record = OtherProxy(
+                country_id=country.country_id,
+                country_code=country.country_code.upper(),
+                country_name_snapshot=country.country_name,
+                overlord_country_id=overlord_country_id,
+                overlord_country_name_snapshot=overlord_country_name,
+                created_by=country.actor_id,
+            )
+            self.session.add(record)
+            return record
+
+        record.country_code = country.country_code.upper()
+        record.country_name_snapshot = country.country_name
+        record.overlord_country_name_snapshot = overlord_country_name
+        return record
+
+    async def remove(self, country_id: str, overlord_country_id: str | None = None) -> bool:
+        statement = delete(OtherProxy).where(OtherProxy.country_id == country_id)
+        if overlord_country_id is not None:
+            statement = statement.where(OtherProxy.overlord_country_id == overlord_country_id)
+        result = await self.session.execute(statement)
+        return result.rowcount > 0
+
+    async def list_all(self) -> list[OtherProxy]:
+        return list(
+            await self.session.scalars(
+                select(OtherProxy).order_by(
+                    OtherProxy.country_name_snapshot,
+                    OtherProxy.overlord_country_name_snapshot,
                 )
             )
         )

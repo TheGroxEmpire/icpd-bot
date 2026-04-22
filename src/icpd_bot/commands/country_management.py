@@ -8,18 +8,22 @@ from sqlalchemy.exc import IntegrityError
 
 from icpd_bot.db.models import (
     CooperatorCountry,
+    CooperatorProxy,
     HostileProxy,
     IcpdCountry,
     IcpdProxy,
+    OtherProxy,
     SanctionedCountry,
     WareraCountryCache,
 )
 from icpd_bot.services.country_registry import (
     CooperatorCountryService,
+    CooperatorProxyService,
     CountryInput,
     HostileProxyService,
     IcpdCountryService,
     IcpdProxyService,
+    OtherProxyService,
     SanctionedCountryService,
 )
 from icpd_bot.services.guild_config import GuildConfigService
@@ -188,6 +192,16 @@ def _format_overlord_section_label(names_and_flags: list[tuple[str, str]]) -> st
     return f"{', '.join(labeled_names[:-1])} & {labeled_names[-1]}"
 
 
+def _normalize_proxy_group_key(label: str) -> str:
+    normalized = "".join(
+        char.lower() if char.isalnum() else "-"
+        for char in label.strip()
+    )
+    while "--" in normalized:
+        normalized = normalized.replace("--", "-")
+    return normalized.strip("-")[:24] or "other-proxy"
+
+
 def build_icpd_proxy_list_embed(
     records: Iterable[IcpdProxy],
     *,
@@ -283,6 +297,142 @@ def build_hostile_proxy_list_embed(
         records_by_country_id.setdefault(record.country_id, []).append(record)
 
     proxies_by_overlord_group: dict[tuple[str, ...], list[HostileProxy]] = {}
+    for country_records in records_by_country_id.values():
+        ordered_records = sorted(
+            country_records,
+            key=lambda record: record.overlord_country_name_snapshot.lower(),
+        )
+        overlord_group = tuple(record.overlord_country_name_snapshot for record in ordered_records)
+        proxies_by_overlord_group.setdefault(overlord_group, []).append(ordered_records[0])
+
+    field_count = 0
+    for overlord_group, proxies in sorted(
+        proxies_by_overlord_group.items(),
+        key=lambda item: (len(item[0]), item[0]),
+    ):
+        lines = []
+        for proxy in sorted(proxies, key=lambda record: record.country_name_snapshot.lower()):
+            flag = country_flag(proxy.country_code)
+            proxy_label = f"{flag} [{proxy.country_name_snapshot}]({country_link(proxy.country_id)})".strip()
+            active_population = active_population_by_country_id.get(proxy.country_id)
+            population_label = f" active `{active_population}`" if active_population is not None else ""
+            lines.append(f"- {proxy_label}{population_label}")
+
+        chunks = _chunk_lines(lines)
+        overlord_label = _format_overlord_section_label(
+            [
+                (
+                    record.overlord_country_name_snapshot,
+                    country_flag(overlord_codes_by_id.get(record.overlord_country_id, "")),
+                )
+                for record in sorted(
+                    records_by_country_id[proxies[0].country_id],
+                    key=lambda item: item.overlord_country_name_snapshot.lower(),
+                )
+                if record.overlord_country_name_snapshot in overlord_group
+            ]
+        )
+        for index, chunk in enumerate(chunks):
+            field_name = overlord_label if index == 0 else f"{overlord_label} (cont.)"
+            embed.add_field(name=field_name, value=chunk, inline=True)
+            field_count += 1
+            if field_count % 3 == 0:
+                embed.add_field(name="\u200b", value="\u200b", inline=False)
+
+    return embed
+
+
+def build_cooperator_proxy_list_embed(
+    records: Iterable[CooperatorProxy],
+    *,
+    overlord_codes_by_id: dict[str, str],
+    active_population_by_country_id: dict[str, int | None],
+) -> discord.Embed:
+    embed = discord.Embed(title="Cooperator Proxies")
+    records_list = sorted(
+        records,
+        key=lambda record: (
+            record.overlord_country_name_snapshot.lower(),
+            record.country_name_snapshot.lower(),
+        ),
+    )
+    if not records_list:
+        embed.description = "No entries stored."
+        return embed
+
+    records_by_country_id: dict[str, list[CooperatorProxy]] = {}
+    for record in records_list:
+        records_by_country_id.setdefault(record.country_id, []).append(record)
+
+    proxies_by_overlord_group: dict[tuple[str, ...], list[CooperatorProxy]] = {}
+    for country_records in records_by_country_id.values():
+        ordered_records = sorted(
+            country_records,
+            key=lambda record: record.overlord_country_name_snapshot.lower(),
+        )
+        overlord_group = tuple(record.overlord_country_name_snapshot for record in ordered_records)
+        proxies_by_overlord_group.setdefault(overlord_group, []).append(ordered_records[0])
+
+    field_count = 0
+    for overlord_group, proxies in sorted(
+        proxies_by_overlord_group.items(),
+        key=lambda item: (len(item[0]), item[0]),
+    ):
+        lines = []
+        for proxy in sorted(proxies, key=lambda record: record.country_name_snapshot.lower()):
+            flag = country_flag(proxy.country_code)
+            proxy_label = f"{flag} [{proxy.country_name_snapshot}]({country_link(proxy.country_id)})".strip()
+            active_population = active_population_by_country_id.get(proxy.country_id)
+            population_label = f" active `{active_population}`" if active_population is not None else ""
+            lines.append(f"- {proxy_label}{population_label}")
+
+        chunks = _chunk_lines(lines)
+        overlord_label = _format_overlord_section_label(
+            [
+                (
+                    record.overlord_country_name_snapshot,
+                    country_flag(overlord_codes_by_id.get(record.overlord_country_id, "")),
+                )
+                for record in sorted(
+                    records_by_country_id[proxies[0].country_id],
+                    key=lambda item: item.overlord_country_name_snapshot.lower(),
+                )
+                if record.overlord_country_name_snapshot in overlord_group
+            ]
+        )
+        for index, chunk in enumerate(chunks):
+            field_name = overlord_label if index == 0 else f"{overlord_label} (cont.)"
+            embed.add_field(name=field_name, value=chunk, inline=True)
+            field_count += 1
+            if field_count % 3 == 0:
+                embed.add_field(name="\u200b", value="\u200b", inline=False)
+
+    return embed
+
+
+def build_other_proxy_list_embed(
+    records: Iterable[OtherProxy],
+    *,
+    overlord_codes_by_id: dict[str, str],
+    active_population_by_country_id: dict[str, int | None],
+) -> discord.Embed:
+    embed = discord.Embed(title="Other Proxies")
+    records_list = sorted(
+        records,
+        key=lambda record: (
+            record.overlord_country_name_snapshot.lower(),
+            record.country_name_snapshot.lower(),
+        ),
+    )
+    if not records_list:
+        embed.description = "No entries stored."
+        return embed
+
+    records_by_country_id: dict[str, list[OtherProxy]] = {}
+    for record in records_list:
+        records_by_country_id.setdefault(record.country_id, []).append(record)
+
+    proxies_by_overlord_group: dict[tuple[str, ...], list[OtherProxy]] = {}
     for country_records in records_by_country_id.values():
         ordered_records = sorted(
             country_records,
@@ -666,6 +816,120 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
             ephemeral=True,
         )
 
+    @app_commands.command(name="add_cooperator_proxy", description="Add or update a cooperator proxy country.")
+    @app_commands.describe(
+        country_id="Pick the proxy country",
+        overlord_country_id="Pick one cooperator owner country",
+    )
+    @app_commands.autocomplete(
+        country_id=autocomplete_warera_country,
+        overlord_country_id=autocomplete_warera_country,
+    )
+    async def add_cooperator_proxy(
+        interaction: discord.Interaction,
+        country_id: str,
+        overlord_country_id: str,
+    ) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        country = await resolve_warera_country(country_id, bot)
+        overlord_country = await resolve_warera_country(overlord_country_id, bot)
+        if country is None or overlord_country is None:
+            await interaction.response.send_message(
+                "One or both countries were not found in cache. Run `/sync_warera_cache` first.",
+                ephemeral=True,
+            )
+            return
+
+        async with bot.session_factory.session() as session:
+            if await session.get(CooperatorCountry, overlord_country_id) is None:
+                await interaction.response.send_message(
+                    f"`{overlord_country.name}` is not stored as a cooperator country. "
+                    "Add it with `/add_cooperator_country` first.",
+                    ephemeral=True,
+                )
+                return
+
+            try:
+                await CooperatorProxyService(session).upsert(
+                    CountryInput(
+                        country_id=country_id,
+                        country_code=country.code,
+                        country_name=country.name,
+                        actor_id=interaction.user.id,
+                    ),
+                    overlord_country_id=overlord_country_id,
+                    overlord_country_name=overlord_country.name,
+                )
+            except IntegrityError:
+                await interaction.response.send_message(
+                    "Could not store that cooperator proxy because the overlord country is not a valid cooperator country.",
+                    ephemeral=True,
+                )
+                return
+
+        await interaction.response.send_message(
+            f"Stored cooperator proxy `{country.code.upper()}` under `{overlord_country.code.upper()}`.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="add_other_proxy", description="Add or update an other proxy country.")
+    @app_commands.describe(
+        country_id="Pick the proxy country",
+        proxy_group_label="Custom label for this proxy group",
+    )
+    @app_commands.autocomplete(
+        country_id=autocomplete_warera_country,
+    )
+    async def add_other_proxy(
+        interaction: discord.Interaction,
+        country_id: str,
+        proxy_group_label: str,
+    ) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        country = await resolve_warera_country(country_id, bot)
+        if country is None:
+            await interaction.response.send_message(
+                "Country not found in cache. Run `/sync_warera_cache` first.",
+                ephemeral=True,
+            )
+            return
+        normalized_group_label = proxy_group_label.strip()
+        if not normalized_group_label:
+            await interaction.response.send_message(
+                "Proxy group label cannot be empty.",
+                ephemeral=True,
+            )
+            return
+
+        async with bot.session_factory.session() as session:
+            await OtherProxyService(session).upsert(
+                CountryInput(
+                    country_id=country_id,
+                    country_code=country.code,
+                    country_name=country.name,
+                    actor_id=interaction.user.id,
+                ),
+                overlord_country_id=_normalize_proxy_group_key(normalized_group_label),
+                overlord_country_name=normalized_group_label,
+            )
+
+        await interaction.response.send_message(
+            f"Stored other proxy `{country.code.upper()}` under `{normalized_group_label}`.",
+            ephemeral=True,
+        )
+
     @app_commands.command(name="add_cooperator_country", description="Add or update a cooperator country.")
     @app_commands.describe(country_id="Pick a Warera country")
     @app_commands.autocomplete(country_id=autocomplete_warera_country)
@@ -802,6 +1066,64 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
         message = "Hostile proxy removed." if removed else "No hostile proxy found for that selection."
         await interaction.response.send_message(message, ephemeral=True)
 
+    @app_commands.command(name="remove_cooperator_proxy", description="Remove a cooperator proxy country.")
+    @app_commands.describe(
+        country_id="Pick a proxy country",
+        overlord_country_id="Optional cooperator owner country to remove only one proxy link",
+    )
+    @app_commands.autocomplete(
+        country_id=autocomplete_warera_country,
+        overlord_country_id=autocomplete_warera_country,
+    )
+    async def remove_cooperator_proxy(
+        interaction: discord.Interaction,
+        country_id: str,
+        overlord_country_id: str | None = None,
+    ) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        async with bot.session_factory.session() as session:
+            removed = await CooperatorProxyService(session).remove(country_id, overlord_country_id)
+
+        message = "Cooperator proxy removed." if removed else "No cooperator proxy found for that selection."
+        await interaction.response.send_message(message, ephemeral=True)
+
+    @app_commands.command(name="remove_other_proxy", description="Remove an other proxy country.")
+    @app_commands.describe(
+        country_id="Pick a proxy country",
+        proxy_group_label="Optional custom proxy group label to remove only one proxy link",
+    )
+    @app_commands.autocomplete(
+        country_id=autocomplete_warera_country,
+    )
+    async def remove_other_proxy(
+        interaction: discord.Interaction,
+        country_id: str,
+        proxy_group_label: str | None = None,
+    ) -> None:
+        if not await require_council_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+        ):
+            return
+
+        async with bot.session_factory.session() as session:
+            removed = await OtherProxyService(
+                session
+            ).remove(
+                country_id,
+                _normalize_proxy_group_key(proxy_group_label) if proxy_group_label and proxy_group_label.strip() else None,
+            )
+
+        message = "Other proxy removed." if removed else "No other proxy found for that selection."
+        await interaction.response.send_message(message, ephemeral=True)
+
     @app_commands.command(name="list_icpd_proxies", description="List ICPD proxy countries.")
     @app_commands.describe(
         post_publicly="Post the embed publicly in this channel",
@@ -895,6 +1217,99 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
             tag=tag,
         )
 
+    @app_commands.command(name="list_cooperator_proxies", description="List cooperator proxy countries.")
+    @app_commands.describe(
+        post_publicly="Post the embed publicly in this channel",
+        tag="Optional tag or message to include when posting publicly",
+    )
+    async def list_cooperator_proxies(
+        interaction: discord.Interaction,
+        post_publicly: bool = False,
+        tag: str | None = None,
+    ) -> None:
+        if not await require_read_only_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+            session_factory=bot.session_factory,
+        ):
+            return
+
+        async with bot.session_factory.session() as session:
+            records = await CooperatorProxyService(session).list_all()
+            cooperator_countries = await CooperatorCountryService(session).list_all()
+            country_ids = sorted({record.country_id for record in records})
+            proxy_countries = list(
+                await session.scalars(
+                    select(WareraCountryCache).where(WareraCountryCache.country_id.in_(country_ids))
+                )
+            ) if country_ids else []
+        overlord_codes_by_id = {
+            country.country_id: country.country_code
+            for country in cooperator_countries
+        }
+        active_population_by_country_id = {
+            country.country_id: country.active_population
+            for country in proxy_countries
+        }
+
+        await send_embed_with_visibility_option(
+            interaction,
+            embed=build_cooperator_proxy_list_embed(
+                records,
+                overlord_codes_by_id=overlord_codes_by_id,
+                active_population_by_country_id=active_population_by_country_id,
+            ),
+            post_publicly=post_publicly,
+            tag=tag,
+        )
+
+    @app_commands.command(name="list_other_proxies", description="List other proxy countries.")
+    @app_commands.describe(
+        post_publicly="Post the embed publicly in this channel",
+        tag="Optional tag or message to include when posting publicly",
+    )
+    async def list_other_proxies(
+        interaction: discord.Interaction,
+        post_publicly: bool = False,
+        tag: str | None = None,
+    ) -> None:
+        if not await require_read_only_access(
+            interaction,
+            home_guild_id=bot.settings.discord_guild_id,
+            council_role_id=bot.settings.council_role_id,
+            session_factory=bot.session_factory,
+        ):
+            return
+
+        async with bot.session_factory.session() as session:
+            records = await OtherProxyService(session).list_all()
+            country_ids = sorted({record.country_id for record in records} | {record.overlord_country_id for record in records})
+            cached_countries = list(
+                await session.scalars(
+                    select(WareraCountryCache).where(WareraCountryCache.country_id.in_(country_ids))
+                )
+            ) if country_ids else []
+        overlord_codes_by_id = {
+            country.country_id: country.code
+            for country in cached_countries
+        }
+        active_population_by_country_id = {
+            country.country_id: country.active_population
+            for country in cached_countries
+        }
+
+        await send_embed_with_visibility_option(
+            interaction,
+            embed=build_other_proxy_list_embed(
+                records,
+                overlord_codes_by_id=overlord_codes_by_id,
+                active_population_by_country_id=active_population_by_country_id,
+            ),
+            post_publicly=post_publicly,
+            tag=tag,
+        )
+
     @app_commands.command(name="add_read_only_role", description="Allow a role to use read-only bot commands.")
     async def add_read_only_role(interaction: discord.Interaction, role_id: str) -> None:
         if not await require_council_access(
@@ -971,13 +1386,19 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
         list_icpd_countries,
         add_icpd_proxy,
         add_hostile_proxy,
+        add_cooperator_proxy,
+        add_other_proxy,
         add_cooperator_country,
         remove_cooperator_country,
         list_cooperator_countries,
         remove_icpd_proxy,
         remove_hostile_proxy,
+        remove_cooperator_proxy,
+        remove_other_proxy,
         list_icpd_proxies,
         list_hostile_proxies,
+        list_cooperator_proxies,
+        list_other_proxies,
         add_read_only_role,
         remove_read_only_role,
         list_read_only_roles,

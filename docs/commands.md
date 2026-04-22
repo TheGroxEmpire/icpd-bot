@@ -192,6 +192,46 @@ Response:
 
 - ephemeral confirmation
 
+### `/add_cooperator_proxy`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `country_id`: proxy country selected from autocomplete
+- `overlord_country_id`: cooperator owner country selected from autocomplete
+
+Behavior:
+
+- requires both countries to exist in cache
+- requires the selected overlord country to already be stored as a cooperator country
+- creates a proxy-to-overlord link
+- the same proxy country can be added multiple times with different overlords to represent a joint proxy
+
+Response:
+
+- ephemeral confirmation
+
+### `/add_other_proxy`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `country_id`: proxy country selected from autocomplete
+- `proxy_group_label`: custom label such as `non-aligned` or `belgian separatist`
+
+Behavior:
+
+- requires the proxy country to exist in cache
+- creates a proxy-to-label link
+- the same proxy country can be added multiple times with different labels when needed
+- the label is used as the section heading in `/list_other_proxies`
+
+Response:
+
+- ephemeral confirmation
+
 ### `/add_cooperator_country`
 
 Permission: `Council-only`
@@ -280,6 +320,42 @@ Response:
 
 - ephemeral confirmation or not-found message
 
+### `/remove_cooperator_proxy`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `country_id`: Warera country selected from autocomplete
+- `overlord_country_id`: optional cooperator owner country selected from autocomplete
+
+Behavior:
+
+- removes one proxy-to-overlord link when `overlord_country_id` is provided
+- removes all proxy links for that proxy country when `overlord_country_id` is omitted
+
+Response:
+
+- ephemeral confirmation or not-found message
+
+### `/remove_other_proxy`
+
+Permission: `Council-only`
+
+Arguments:
+
+- `country_id`: Warera country selected from autocomplete
+- `proxy_group_label`: optional custom label to remove only one proxy link
+
+Behavior:
+
+- removes one proxy-to-label link when `proxy_group_label` is provided
+- removes all proxy links for that proxy country when `proxy_group_label` is omitted
+
+Response:
+
+- ephemeral confirmation or not-found message
+
 ### `/list_icpd_proxies`
 
 Permission: `Read-only access`
@@ -317,6 +393,50 @@ Behavior:
 - groups hostile proxies by hostile overlord country
 - joint proxies can show multiple overlord flags on the same proxy country label
 - includes each country's cached active population when available
+- if `post_publicly=true`, posts the embed in the current channel and sends a private confirmation to the caller
+
+Response:
+
+- default: ephemeral embed
+- public mode: channel embed plus ephemeral confirmation
+
+### `/list_cooperator_proxies`
+
+Permission: `Read-only access`
+
+Arguments:
+
+- `post_publicly`: optional boolean, default `false`
+- `tag`: optional free text included above the embed when posting publicly
+
+Behavior:
+
+- shows cooperator proxies grouped by overlord country
+- renders the proxy list in columns to reduce scrolling
+- joint proxies can show multiple overlord flags on the same proxy country label
+- includes each proxy country's cached active population when available
+- if `post_publicly=true`, posts the embed in the current channel and sends a private confirmation to the caller
+
+Response:
+
+- default: ephemeral embed
+- public mode: channel embed plus ephemeral confirmation
+
+### `/list_other_proxies`
+
+Permission: `Read-only access`
+
+Arguments:
+
+- `post_publicly`: optional boolean, default `false`
+- `tag`: optional free text included above the embed when posting publicly
+
+Behavior:
+
+- shows other proxies grouped by custom label
+- renders the proxy list in columns to reduce scrolling
+- joint proxies can show multiple labels on the same proxy country label
+- includes each proxy country's cached active population when available
 - if `post_publicly=true`, posts the embed in the current channel and sends a private confirmation to the caller
 
 Response:

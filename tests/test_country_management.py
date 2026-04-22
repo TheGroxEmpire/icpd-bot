@@ -1,5 +1,10 @@
 from icpd_bot.commands.country_management import build_hostile_proxy_list_embed, build_icpd_proxy_list_embed
-from icpd_bot.db.models import HostileProxy, IcpdProxy
+from icpd_bot.commands.country_management import (
+    build_cooperator_proxy_list_embed,
+    build_hostile_proxy_list_embed,
+    build_icpd_proxy_list_embed,
+)
+from icpd_bot.db.models import CooperatorProxy, HostileProxy, IcpdProxy
 
 
 def test_build_icpd_proxy_list_embed_shows_active_population() -> None:
@@ -40,3 +45,23 @@ def test_build_hostile_proxy_list_embed_shows_active_population() -> None:
 
     assert len(embed.fields) == 1
     assert "active `42`" in embed.fields[0].value
+
+
+def test_build_cooperator_proxy_list_embed_shows_active_population() -> None:
+    embed = build_cooperator_proxy_list_embed(
+        [
+            CooperatorProxy(
+                country_id="coop-1",
+                country_code="pl",
+                country_name_snapshot="Poland Proxy",
+                overlord_country_id="coop-owner-1",
+                overlord_country_name_snapshot="Poland",
+                created_by=1,
+            )
+        ],
+        overlord_codes_by_id={"coop-owner-1": "pl"},
+        active_population_by_country_id={"coop-1": 21},
+    )
+
+    assert len(embed.fields) == 1
+    assert "active `21`" in embed.fields[0].value
