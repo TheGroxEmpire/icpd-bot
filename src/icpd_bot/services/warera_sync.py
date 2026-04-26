@@ -106,9 +106,9 @@ class WareraSyncService:
         now = datetime.now(timezone.utc)
         party_ids = sorted(
             {
-                str(payload.get("rulingParty")).strip()
+                party_id
                 for payload in countries
-                if payload.get("rulingParty")
+                if (party_id := self._as_optional_embedded_id(payload.get("rulingParty"))) is not None
             }
         )
         existing_party_records = {
@@ -184,6 +184,16 @@ class WareraSyncService:
             return None
         text = str(value).strip()
         return text or None
+
+    @classmethod
+    def _as_optional_embedded_id(cls, value: object) -> str | None:
+        if isinstance(value, dict):
+            return (
+                cls._as_optional_id(value.get("_id"))
+                or cls._as_optional_id(value.get("id"))
+                or cls._as_optional_id(value.get("partyId"))
+            )
+        return cls._as_optional_id(value)
 
     @staticmethod
     def _to_optional_int(value: object) -> int | None:

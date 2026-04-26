@@ -596,6 +596,46 @@ def test_mysterious_plant_deposit_bonus_outranks_weak_specialist_bonus() -> None
     assert deposit_score == 60.0
 
 
+def test_country_specialization_bonus_includes_object_ruling_party_industrialist_bonus() -> None:
+    country = WareraCountryCache(
+        country_id="venezuela-1",
+        code="ve",
+        name="Venezuela",
+        production_specialization="steel",
+        raw_payload=(
+            '{"specializedItem":"steel","rulingParty":{"_id":"party-1"},'
+            '"strategicResources":{"bonuses":{"productionPercent":31.5}},'
+            '"rankings":{"countryProductionBonus":{"value":26.5}}}'
+        ),
+    )
+    party = WareraPartyCache(
+        party_id="party-1",
+        name="Industrialists",
+        country_id="venezuela-1",
+        industrialism=2,
+        raw_payload=None,
+    )
+    region = build_region(
+        "ve-center",
+        country_id="venezuela-1",
+        initial_country_id="venezuela-1",
+        resistance=None,
+        resistance_max=None,
+        development=1.0,
+    )
+
+    party_id = RecommendationService._ruling_party_id(country)
+    bonus = RecommendationService._total_production_bonus_percent(
+        country=country,
+        region=region,
+        party=party,
+        specialization="steel",
+    )
+
+    assert party_id == "party-1"
+    assert bonus == 61.5
+
+
 @pytest.mark.asyncio
 async def test_build_recommendations_manual_override_keeps_region_country_and_bonus_metadata() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")

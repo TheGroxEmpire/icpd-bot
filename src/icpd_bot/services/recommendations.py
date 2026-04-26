@@ -101,7 +101,10 @@ class RecommendationService:
             for record in ignored_deposits
             if (
                 self._resolve_material_id(record.good_type) is not None
-                and (record.expires_at is None or record.expires_at > datetime.now(timezone.utc))
+                and (
+                    record.expires_at is None
+                    or self._ensure_aware_datetime(record.expires_at) > datetime.now(timezone.utc)
+                )
             )
         }
         manual_by_good: dict[str, LocationRecommendation] = {}
@@ -142,11 +145,17 @@ class RecommendationService:
                 resistance_display = None
                 development = None
                 if region:
+                    bonus_country = self._bonus_country_for_region(
+                        good_type,
+                        region,
+                        countries_by_id,
+                    )
                     deposit_bonus_percent, deposit_ends_at = self._deposit_details(region, good_type)
                     production_bonus_percent = self._total_production_bonus_percent(
-                        country=country,
+                        country=bonus_country,
                         region=region,
-                        party=parties_by_id.get(self._ruling_party_id(country)),
+                        party=parties_by_id.get(self._ruling_party_id(bonus_country)),
+                        deposit_party=parties_by_id.get(self._ruling_party_id(country)),
                         specialization=good_type,
                     )
                     resistance_display = self._resistance_display(region)
@@ -204,10 +213,16 @@ class RecommendationService:
             scored_regions = []
             for region in eligible_regions:
                 country = countries_by_id.get(region.country_id)
+                bonus_country = self._bonus_country_for_region(
+                    good_type,
+                    region,
+                    countries_by_id,
+                )
                 production_bonus_percent = self._total_production_bonus_percent(
-                    country=country,
+                    country=bonus_country,
                     region=region,
-                    party=parties_by_id.get(self._ruling_party_id(country)),
+                    party=parties_by_id.get(self._ruling_party_id(bonus_country)),
+                    deposit_party=parties_by_id.get(self._ruling_party_id(country)),
                     specialization=good_type,
                     ignored_region_deposit_keys=active_ignored_deposit_keys,
                 )
@@ -263,6 +278,7 @@ class RecommendationService:
                 icpd_country_ids=icpd_country_ids,
                 cooperator_country_ids=cooperator_country_ids,
                 proxy_country_ids=proxy_country_ids,
+                ignored_region_deposit_keys=active_ignored_deposit_keys,
             )
             if not should_include:
                 continue
@@ -344,10 +360,13 @@ class RecommendationService:
             country_id
             for country_id, country in countries_by_id.items()
             if cls._resolve_material_id(country.production_specialization) == normalized_good_type
-            and cls._is_icpd_aligned_country(
-                country_id,
-                icpd_country_ids=icpd_country_ids,
-                proxy_country_ids=proxy_country_ids,
+            and (
+                cls._is_icpd_aligned_country(
+                    country_id,
+                    icpd_country_ids=icpd_country_ids,
+                    proxy_country_ids=proxy_country_ids,
+                )
+                or country_id in cooperator_country_ids
             )
         }
         aligned_specialist_fallbacks = {
@@ -442,6 +461,7 @@ class RecommendationService:
         icpd_country_ids: set[str],
         cooperator_country_ids: set[str],
         proxy_country_ids: set[str],
+        ignored_region_deposit_keys: set[tuple[str, str | None]] | None = None,
     ) -> tuple[bool, str]:
         if (
             current_sanction is not None
@@ -480,13 +500,24 @@ class RecommendationService:
         if (
             source_country is not None
             and region.initial_country_id != region.country_id
-            and cls._is_icpd_aligned_country(
+            and cls._country_alignment_status(
                 source_country.country_id,
                 icpd_country_ids=icpd_country_ids,
+                cooperator_country_ids=cooperator_country_ids,
                 proxy_country_ids=proxy_country_ids,
             )
         ):
             return True, f"Occupied territory of ICPD-aligned country {source_country.name}."
+        if (
+            country
+            and country.production_specialization == good_type
+            and cls._is_region_deposit_ignored(
+                region.region_id,
+                good_type,
+                ignored_region_deposit_keys=ignored_region_deposit_keys,
+            )
+        ):
+            return True, f"Region deposit ignored; country specialization match in {country.name}."
         if country and country.production_specialization == good_type:
             return False, f"Country specialization match in {country.name}."
         return False, "Best eligible cached region."
@@ -513,6 +544,28 @@ class RecommendationService:
             return False
         deposit_item = cls._resolve_material_id(deposit.get("type"))
         return deposit_item == good_type and cls._is_deposit_active(deposit)
+
+    @classmethod
+    def _bonus_country_for_region(
+        cls,
+        good_type: str,
+        region: WareraRegionCache,
+        countries_by_id: dict[str, WareraCountryCache],
+    ) -> WareraCountryCache | None:
+        normalized_good_type = cls._resolve_material_id(good_type)
+        current_country = countries_by_id.get(region.country_id)
+        if (
+            current_country is not None
+            and cls._resolve_material_id(current_country.production_specialization) == normalized_good_type
+        ):
+            return current_country
+        source_country = countries_by_id.get(region.initial_country_id) if region.initial_country_id else None
+        if (
+            source_country is not None
+            and cls._resolve_material_id(source_country.production_specialization) == normalized_good_type
+        ):
+            return source_country
+        return current_country
 
     @classmethod
     def _limited_sanction_occupied_regions(
@@ -765,18 +818,8 @@ class RecommendationService:
         payload = cls._load_payload(country.raw_payload if country else None)
         if not payload:
             return False
-        strategic_resources = payload.get("strategicResources")
-        rankings = payload.get("rankings")
-        strategic_bonus = (
-            strategic_resources.get("bonuses", {}).get("productionPercent")
-            if isinstance(strategic_resources, dict)
-            else None
-        )
-        ranking_bonus = (
-            rankings.get("countryProductionBonus", {}).get("value")
-            if isinstance(rankings, dict)
-            else None
-        )
+        strategic_bonus = cls._strategic_resource_production_bonus(payload)
+        ranking_bonus = cls._country_production_ranking_bonus(payload)
         return cls._normalize_bonus_percent(
             strategic_bonus if strategic_bonus is not None else ranking_bonus
         ) > 0.0
@@ -799,8 +842,6 @@ class RecommendationService:
         industrialism = cls._party_industrialism(party)
         if industrialism >= 2:
             return False
-        if industrialism <= -1:
-            return deposit_material_id in cls.FOOD_OR_BUFF_DEPOSIT_IDS
         return True
 
     @classmethod
@@ -816,7 +857,7 @@ class RecommendationService:
     def _ruling_party_id(cls, country: WareraCountryCache | None) -> str | None:
         payload = cls._load_payload(country.raw_payload if country else None)
         ruling_party = payload.get("rulingParty")
-        return str(ruling_party).strip() if ruling_party else None
+        return cls._as_optional_embedded_id(ruling_party)
 
     @classmethod
     def _country_specialization_bonus_pct(
@@ -828,23 +869,15 @@ class RecommendationService:
         payload = cls._load_payload(country.raw_payload if country else None)
         if not payload:
             return 0.0
-        specialized_item = cls._resolve_material_id(payload.get("specializedItem"))
+        specialized_item = cls._resolve_material_id(
+            payload.get("specializedItem") or country.production_specialization
+        )
         if specialized_item != specialization:
             return 0.0
         if not cls._should_apply_country_specialization_bonus(party):
             return 0.0
-        strategic_resources = payload.get("strategicResources")
-        rankings = payload.get("rankings")
-        strategic_bonus = (
-            strategic_resources.get("bonuses", {}).get("productionPercent")
-            if isinstance(strategic_resources, dict)
-            else None
-        )
-        ranking_bonus = (
-            rankings.get("countryProductionBonus", {}).get("value")
-            if isinstance(rankings, dict)
-            else None
-        )
+        strategic_bonus = cls._strategic_resource_production_bonus(payload)
+        ranking_bonus = cls._country_production_ranking_bonus(payload)
         base = cls._normalize_bonus_percent(strategic_bonus if strategic_bonus is not None else ranking_bonus)
         return round(base + cls._party_specialization_bonus_pct(party, specialization), 6)
 
@@ -912,6 +945,7 @@ class RecommendationService:
         region: WareraRegionCache,
         party: WareraPartyCache | None,
         specialization: str,
+        deposit_party: WareraPartyCache | None = None,
         ignored_region_deposit_keys: set[tuple[str, str | None]] | None = None,
     ) -> float:
         normalized_specialization = cls._resolve_material_id(specialization)
@@ -922,7 +956,7 @@ class RecommendationService:
             + cls._region_deposit_bonus_pct(
                 region,
                 normalized_specialization,
-                party,
+                deposit_party if deposit_party is not None else party,
                 ignored_region_deposit_keys=ignored_region_deposit_keys,
             ),
             6,
@@ -947,7 +981,7 @@ class RecommendationService:
         try:
             payload = json.loads(raw_payload)
         except json.JSONDecodeError:
-            return {}
+            payload = RecommendationService._load_payload_with_balanced_braces(raw_payload)
         return payload if isinstance(payload, dict) else {}
 
     @classmethod
@@ -977,3 +1011,59 @@ class RecommendationService:
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc)
+
+    @staticmethod
+    def _as_optional_embedded_id(value: object) -> str | None:
+        if isinstance(value, dict):
+            for key in ("_id", "id", "partyId"):
+                nested_value = value.get(key)
+                if nested_value:
+                    text = str(nested_value).strip()
+                    if text:
+                        return text
+            return None
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _ensure_aware_datetime(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @staticmethod
+    def _load_payload_with_balanced_braces(raw_payload: str) -> object:
+        missing_closing_braces = raw_payload.count("{") - raw_payload.count("}")
+        if missing_closing_braces <= 0:
+            return {}
+        try:
+            return json.loads(f"{raw_payload}{'}' * missing_closing_braces}")
+        except json.JSONDecodeError:
+            return {}
+
+    @classmethod
+    def _strategic_resource_production_bonus(cls, payload: dict[str, object]) -> object | None:
+        strategic_resources = payload.get("strategicResources")
+        if not isinstance(strategic_resources, dict):
+            return None
+        bonuses = strategic_resources.get("bonuses")
+        if isinstance(bonuses, dict):
+            for key in ("productionPercent", "productionBonusPercent", "productionBonus"):
+                if bonuses.get(key) is not None:
+                    return bonuses[key]
+        for key in ("productionPercent", "productionBonusPercent", "productionBonus"):
+            if strategic_resources.get(key) is not None:
+                return strategic_resources[key]
+        return None
+
+    @staticmethod
+    def _country_production_ranking_bonus(payload: dict[str, object]) -> object | None:
+        rankings = payload.get("rankings")
+        if not isinstance(rankings, dict):
+            return None
+        country_production_bonus = rankings.get("countryProductionBonus")
+        if isinstance(country_production_bonus, dict):
+            return country_production_bonus.get("value")
+        return country_production_bonus
