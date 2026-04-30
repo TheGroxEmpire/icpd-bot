@@ -25,6 +25,19 @@ class FakeWareraClient:
     async def get_regions_object(self) -> dict[str, dict[str, object]]:
         return {}
 
+    async def get_country_by_id(self, country_id: str) -> dict[str, object]:
+        return {
+            "_id": country_id,
+            "code": "bn",
+            "name": "Brunei",
+            "specializedItem": "oil",
+            "rankings": {
+                "countryActivePopulation": {
+                    "value": 27,
+                }
+            },
+        }
+
     async def get_parties_by_id(self, party_ids: list[str]) -> dict[str, dict[str, object]]:
         return {}
 
@@ -134,3 +147,36 @@ async def test_sync_loads_parties_when_country_payload_embeds_ruling_party() -> 
     assert client.requested_party_ids == ["party-1"]
     assert party is not None
     assert party.industrialism == 2
+
+
+@pytest.mark.asyncio
+async def test_sync_countries_by_id_updates_country_active_population() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    async with session_factory() as session:
+        session.add(
+            WareraCountryCache(
+                country_id="country-1",
+                code="bn",
+                name="Brunei",
+                active_population=13,
+                raw_payload="{}",
+            )
+        )
+        await session.commit()
+
+        updated = await WareraSyncService(session, FakeWareraClient()).sync_countries_by_id(
+            ["country-1"]
+        )
+        await session.commit()
+
+        country = await session.get(WareraCountryCache, "country-1")
+
+    await engine.dispose()
+
+    assert updated == 1
+    assert country is not None
+    assert country.active_population == 27

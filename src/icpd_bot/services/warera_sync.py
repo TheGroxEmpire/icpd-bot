@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -52,19 +53,7 @@ class WareraSyncService:
         )
 
         for payload in countries:
-            country_id = self._as_id(payload["_id"])
-            record = await self.session.get(WareraCountryCache, country_id)
-            if record is None:
-                record = WareraCountryCache(country_id=country_id)
-                self.session.add(record)
-            previous_specialization = record.production_specialization
-
-            record.code = str(payload.get("code", "")).lower()
-            record.name = str(payload.get("name", ""))
-            record.production_specialization = self._string_or_none(payload.get("specializedItem"))
-            record.active_population = self._extract_active_population(payload)
-            record.raw_payload = json.dumps(payload, separators=(",", ":"), default=str)
-            record.fetched_at = datetime.now(timezone.utc)
+            country_id, previous_specialization, record = await self._upsert_country_cache(payload)
 
             if country_id in sanctioned_ids and previous_specialization != record.production_specialization:
                 fingerprint = record.production_specialization or "none"
@@ -168,6 +157,34 @@ class WareraSyncService:
             separators=(",", ":"),
         )
         return counts
+
+    async def sync_countries_by_id(self, country_ids: Iterable[str]) -> int:
+        normalized_country_ids = sorted(
+            {country_id.strip() for country_id in country_ids if country_id.strip()}
+        )
+        for country_id in normalized_country_ids:
+            payload = await self.client.get_country_by_id(country_id)
+            await self._upsert_country_cache(payload)
+        return len(normalized_country_ids)
+
+    async def _upsert_country_cache(
+        self,
+        payload: dict[str, object],
+    ) -> tuple[str, str | None, WareraCountryCache]:
+        country_id = self._as_id(payload["_id"])
+        record = await self.session.get(WareraCountryCache, country_id)
+        if record is None:
+            record = WareraCountryCache(country_id=country_id)
+            self.session.add(record)
+        previous_specialization = record.production_specialization
+
+        record.code = str(payload.get("code", "")).lower()
+        record.name = str(payload.get("name", ""))
+        record.production_specialization = self._string_or_none(payload.get("specializedItem"))
+        record.active_population = self._extract_active_population(payload)
+        record.raw_payload = json.dumps(payload, separators=(",", ":"), default=str)
+        record.fetched_at = datetime.now(timezone.utc)
+        return country_id, previous_specialization, record
 
     @staticmethod
     def _as_id(value: object) -> str:

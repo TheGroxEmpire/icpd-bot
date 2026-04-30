@@ -1,10 +1,12 @@
 from collections.abc import Iterable
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import discord
 from discord import app_commands
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from icpd_bot.db.models import (
     CooperatorCountry,
@@ -16,6 +18,7 @@ from icpd_bot.db.models import (
     SanctionedCountry,
     WareraCountryCache,
 )
+from icpd_bot.integrations.warera import WareraClient
 from icpd_bot.services.country_registry import (
     CooperatorCountryService,
     CooperatorProxyService,
@@ -28,6 +31,7 @@ from icpd_bot.services.country_registry import (
 )
 from icpd_bot.services.guild_config import GuildConfigService
 from icpd_bot.services.permissions import require_council_access, require_read_only_access
+from icpd_bot.services.warera_sync import WareraSyncService
 
 if TYPE_CHECKING:
     from icpd_bot.bot.app import ICPDBot
@@ -40,21 +44,80 @@ async def send_embed_with_visibility_option(
     post_publicly: bool,
     tag: str | None,
 ) -> None:
+    async def send_ephemeral_message(
+        content: str | None = None,
+        *,
+        embed: discord.Embed | None = None,
+    ) -> None:
+        if interaction.response.is_done():
+            await interaction.followup.send(content=content, embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(content=content, embed=embed, ephemeral=True)
+
     if not post_publicly:
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await send_ephemeral_message(embed=embed)
         return
 
     channel = interaction.channel
     if channel is None:
-        await interaction.response.send_message(
+        await send_ephemeral_message(
             "I could not find a channel to post that embed publicly.",
-            ephemeral=True,
         )
         return
 
     tag_text = tag.strip() if tag else ""
-    await channel.send(content=tag_text or None, embed=embed)
-    await interaction.response.send_message("Posted the embed publicly.", ephemeral=True)
+    try:
+        await channel.send(content=tag_text or None, embed=embed)
+    except discord.Forbidden:
+        await send_ephemeral_message(
+            "I could not post publicly in this channel because Discord denied access. "
+            "Please check that I can view the channel and send messages there.",
+        )
+        return
+    except discord.HTTPException:
+        await send_ephemeral_message(
+            "Discord rejected the public post. Please try again, or check the channel permissions.",
+        )
+        return
+
+    await send_ephemeral_message("Posted the embed publicly.")
+
+
+async def refresh_stale_warera_country_cache_for_ids(
+    bot: "ICPDBot",
+    session: AsyncSession,
+    country_ids: Iterable[str],
+) -> None:
+    normalized_country_ids = sorted({country_id for country_id in country_ids if country_id})
+    if not normalized_country_ids:
+        return
+
+    cached_countries = list(
+        await session.scalars(
+            select(WareraCountryCache).where(WareraCountryCache.country_id.in_(normalized_country_ids))
+        )
+    )
+    cached_by_id = {country.country_id: country for country in cached_countries}
+    stale_before = datetime.now(timezone.utc) - timedelta(seconds=bot.settings.sync_interval_seconds)
+    stale_country_ids = []
+    for country_id in normalized_country_ids:
+        country = cached_by_id.get(country_id)
+        if country is None or country.fetched_at is None:
+            stale_country_ids.append(country_id)
+            continue
+        fetched_at = country.fetched_at
+        if fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+        if fetched_at < stale_before:
+            stale_country_ids.append(country_id)
+    if not stale_country_ids:
+        return
+
+    async with WareraClient(
+        base_url=bot.settings.warera_api_base_url,
+        token=bot.settings.warera_api_token,
+    ) as client:
+        await WareraSyncService(session, client).sync_countries_by_id(stale_country_ids)
 
 
 def format_country_lines(records: Iterable[SanctionedCountry | IcpdCountry | CooperatorCountry | IcpdProxy]) -> str:
@@ -1141,10 +1204,12 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
             session_factory=bot.session_factory,
         ):
             return
+        await interaction.response.defer(ephemeral=True)
         async with bot.session_factory.session() as session:
             records = await IcpdProxyService(session).list_all()
             icpd_countries = await IcpdCountryService(session).list_all()
             proxy_country_ids = sorted({record.country_id for record in records})
+            await refresh_stale_warera_country_cache_for_ids(bot, session, proxy_country_ids)
             proxy_countries = list(
                 await session.scalars(
                     select(WareraCountryCache).where(WareraCountryCache.country_id.in_(proxy_country_ids))
@@ -1187,10 +1252,13 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
             session_factory=bot.session_factory,
         ):
             return
+        await interaction.response.defer(ephemeral=True)
 
         async with bot.session_factory.session() as session:
             records = await HostileProxyService(session).list_all()
-            country_ids = sorted({record.country_id for record in records} | {record.overlord_country_id for record in records})
+            proxy_country_ids = {record.country_id for record in records}
+            country_ids = sorted(proxy_country_ids | {record.overlord_country_id for record in records})
+            await refresh_stale_warera_country_cache_for_ids(bot, session, proxy_country_ids)
             cached_countries = list(
                 await session.scalars(
                     select(WareraCountryCache).where(WareraCountryCache.country_id.in_(country_ids))
@@ -1234,11 +1302,13 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
             session_factory=bot.session_factory,
         ):
             return
+        await interaction.response.defer(ephemeral=True)
 
         async with bot.session_factory.session() as session:
             records = await CooperatorProxyService(session).list_all()
             cooperator_countries = await CooperatorCountryService(session).list_all()
             country_ids = sorted({record.country_id for record in records})
+            await refresh_stale_warera_country_cache_for_ids(bot, session, country_ids)
             proxy_countries = list(
                 await session.scalars(
                     select(WareraCountryCache).where(WareraCountryCache.country_id.in_(country_ids))
@@ -1281,10 +1351,13 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
             session_factory=bot.session_factory,
         ):
             return
+        await interaction.response.defer(ephemeral=True)
 
         async with bot.session_factory.session() as session:
             records = await OtherProxyService(session).list_all()
-            country_ids = sorted({record.country_id for record in records} | {record.overlord_country_id for record in records})
+            proxy_country_ids = {record.country_id for record in records}
+            country_ids = sorted(proxy_country_ids | {record.overlord_country_id for record in records})
+            await refresh_stale_warera_country_cache_for_ids(bot, session, proxy_country_ids)
             cached_countries = list(
                 await session.scalars(
                     select(WareraCountryCache).where(WareraCountryCache.country_id.in_(country_ids))
