@@ -25,7 +25,11 @@ from icpd_bot.views.recommended_regions import build_recommended_regions_embed
 class ICPDBot(commands.Bot):
     def __init__(self, settings: Settings, session_factory: DatabaseSessionFactory) -> None:
         intents = discord.Intents.default()
-        super().__init__(command_prefix="!", intents=intents, application_id=settings.discord_application_id)
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            application_id=settings.discord_application_id,
+        )
         self.settings = settings
         self.session_factory = session_factory
         self.alert_service = AlertService(self)
@@ -76,10 +80,14 @@ class ICPDBot(commands.Bot):
         refreshed = 0
         async with self.session_factory.session() as session:
             embed_service = ManagedEmbedService(session)
-            records = await (embed_service.list_active() if force_all else embed_service.due_active_lists())
+            records = await (
+                embed_service.list_active() if force_all else embed_service.due_active_lists()
+            )
             if not records:
                 return 0
-            entries = await RecommendationService(session).build_recommendations(self.settings.discord_guild_id)
+            entries = await RecommendationService(session).build_recommendations(
+                self.settings.discord_guild_id
+            )
             embed = build_recommended_regions_embed(entries)
             for record in records:
                 try:
@@ -101,9 +109,15 @@ class ICPDBot(commands.Bot):
         ) as client:
             async with self.session_factory.session() as session:
                 counts = await WareraSyncService(session, client).sync()
-                guild_config = await GuildConfigService(session).get_guild_config(self.settings.discord_guild_id)
+                guild_config = await GuildConfigService(session).get_guild_config(
+                    self.settings.discord_guild_id
+                )
         if guild_config and guild_config.alert_channel_id:
-            for change in counts.specialization_changes:
+            alert_messages = [
+                *counts.specialization_changes,
+                *counts.proxy_active_population_warnings,
+            ]
+            for change in alert_messages:
                 await self.alert_service.send_to_channel(
                     guild_config.alert_channel_id,
                     change,

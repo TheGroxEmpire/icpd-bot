@@ -13,7 +13,10 @@ if TYPE_CHECKING:
 
 
 def build_sync_commands(bot: "ICPDBot") -> list[app_commands.Command]:
-    @app_commands.command(name="sync_warera_cache", description="Fetch fresh Warera data into the local cache.")
+    @app_commands.command(
+        name="sync_warera_cache",
+        description="Fetch fresh Warera data into the local cache.",
+    )
     async def sync_warera_cache(interaction: discord.Interaction) -> None:
         if not await require_council_access(
             interaction,
@@ -29,10 +32,16 @@ def build_sync_commands(bot: "ICPDBot") -> list[app_commands.Command]:
         ) as client:
             async with bot.session_factory.session() as session:
                 counts = await WareraSyncService(session, client).sync()
-                guild_config = await GuildConfigService(session).get_guild_config(bot.settings.discord_guild_id)
+                guild_config = await GuildConfigService(session).get_guild_config(
+                    bot.settings.discord_guild_id
+                )
 
-        for change in counts.specialization_changes:
-            if guild_config and guild_config.alert_channel_id:
+        if guild_config and guild_config.alert_channel_id:
+            alert_messages = [
+                *counts.specialization_changes,
+                *counts.proxy_active_population_warnings,
+            ]
+            for change in alert_messages:
                 await bot.alert_service.send_to_channel(
                     guild_config.alert_channel_id,
                     change,

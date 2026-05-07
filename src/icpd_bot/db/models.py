@@ -125,7 +125,11 @@ class LocationRecommendation(Base):
     location_name_snapshot: Mapped[str] = mapped_column(String(255))
     recommendation_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_by: Mapped[int] = mapped_column(BigInteger)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
 
 class IgnoredRecommendationRegion(Base):
@@ -166,14 +170,35 @@ class SpecializationAlertState(Base):
     country_id: Mapped[str] = mapped_column(String(24), primary_key=True)
     last_known_specialization_fingerprint: Mapped[str] = mapped_column(String(255))
     last_alerted_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class ProxyActivePopulationAlertState(Base):
+    __tablename__ = "proxy_active_population_alert_state"
+
+    proxy_kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    country_id: Mapped[str] = mapped_column(String(24), primary_key=True)
+    is_below_threshold: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_active_population: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
 
 class ActiveRegionList(Base):
     __tablename__ = "active_region_lists"
 
     message_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    guild_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("guild_config.guild_id", ondelete="CASCADE"))
+    guild_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("guild_config.guild_id", ondelete="CASCADE"),
+    )
     channel_id: Mapped[int] = mapped_column(BigInteger)
     refresh_interval_minutes: Mapped[int] = mapped_column(Integer)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
