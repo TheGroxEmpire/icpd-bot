@@ -1,3 +1,4 @@
+import json
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -17,6 +18,7 @@ from icpd_bot.db.models import (
     OtherProxy,
     SanctionedCountry,
     WareraCountryCache,
+    WareraPartyCache,
 )
 from icpd_bot.integrations.warera import WareraClient
 from icpd_bot.services.country_registry import (
@@ -142,10 +144,146 @@ def country_link(country_id: str) -> str:
     return f"https://app.warera.io/country/{country_id}"
 
 
+def _prettify_ethic_key(key: str) -> str:
+    words: list[str] = []
+    current = ""
+    for char in key.replace("_", " ").replace("-", " "):
+        if char.isupper() and current and not current[-1].isspace():
+            words.append(current)
+            current = char
+        else:
+            current += char
+    if current:
+        words.append(current)
+    return " ".join(words).strip().title() or key
+
+
+ETHIC_LABELS: dict[str, tuple[str, str]] = {
+    "industrialism": ("Agrarist", "Industrialist"),
+    "militarism": ("Pacifist", "Militarist"),
+}
+
+
+def _default_ethic_label(key: str, value: int) -> str:
+    base = _prettify_ethic_key(key)
+    if base.endswith("ism"):
+        base = base[:-3] + "ist"
+    return base if value > 0 else f"Anti-{base}"
+
+
+def _format_ethic_label(key: str, value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        numeric_value = int(float(str(value).strip()))
+    except ValueError:
+        return str(value).strip() or None
+    if numeric_value == 0:
+        return None
+
+    normalized_key = key.strip().lower()
+    negative_label, positive_label = ETHIC_LABELS.get(
+        normalized_key,
+        (_default_ethic_label(key, -1), _default_ethic_label(key, 1)),
+    )
+    label = positive_label if numeric_value > 0 else negative_label
+    return f"Fanatic {label}" if abs(numeric_value) >= 2 else label
+
+
+def _ruling_party_id_from_country(country: WareraCountryCache) -> str | None:
+    if not country.raw_payload:
+        return None
+    try:
+        payload = json.loads(country.raw_payload)
+    except json.JSONDecodeError:
+        return None
+    ruling_party = payload.get("rulingParty") if isinstance(payload, dict) else None
+    if isinstance(ruling_party, dict):
+        for key in ("_id", "id", "partyId"):
+            value = ruling_party.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return None
+    if ruling_party is not None and str(ruling_party).strip():
+        return str(ruling_party).strip()
+    return None
+
+
+def _party_ethics_label(party: WareraPartyCache) -> str | None:
+    ethics: dict[str, object] = {}
+    if party.raw_payload:
+        try:
+            payload = json.loads(party.raw_payload)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("ethics"), dict):
+            ethics = payload["ethics"]
+
+    if not ethics and party.industrialism is not None:
+        ethics = {"industrialism": party.industrialism}
+
+    parts = []
+    for key, value in sorted(ethics.items()):
+        formatted_label = _format_ethic_label(key, value)
+        if formatted_label is not None:
+            parts.append(formatted_label)
+    if not parts:
+        return None
+
+    party_name = party.name.strip()
+    prefix = f"{party_name}: " if party_name else ""
+    return prefix + ", ".join(parts)
+
+
+async def ruling_party_ethics_by_country_id(
+    session: AsyncSession,
+    country_ids: Iterable[str],
+) -> dict[str, str]:
+    normalized_country_ids = sorted({country_id for country_id in country_ids if country_id})
+    if not normalized_country_ids:
+        return {}
+
+    countries = list(
+        await session.scalars(
+            select(WareraCountryCache).where(
+                WareraCountryCache.country_id.in_(normalized_country_ids)
+            )
+        )
+    )
+    party_ids_by_country_id = {
+        country.country_id: party_id
+        for country in countries
+        if (party_id := _ruling_party_id_from_country(country)) is not None
+    }
+    if not party_ids_by_country_id:
+        return {}
+
+    parties_by_id = {
+        party.party_id: party
+        for party in await session.scalars(
+            select(WareraPartyCache).where(
+                WareraPartyCache.party_id.in_(set(party_ids_by_country_id.values()))
+            )
+        )
+    }
+    labels_by_country_id: dict[str, str] = {}
+    for country_id, party_id in party_ids_by_country_id.items():
+        party = parties_by_id.get(party_id)
+        if party is None:
+            continue
+        label = _party_ethics_label(party)
+        if label is not None:
+            labels_by_country_id[country_id] = label
+    return labels_by_country_id
+
+
 def build_country_list_embed(
     *,
     title: str,
     records: Iterable[SanctionedCountry | IcpdCountry | CooperatorCountry | IcpdProxy],
+    ruling_party_ethics_by_country_id: dict[str, str] | None = None,
 ) -> discord.Embed:
     embed = discord.Embed(title=title)
     records_list = list(records)
@@ -182,6 +320,9 @@ def build_country_list_embed(
             details.append(f"Sanction: `{record.sanction_level}`")
         if isinstance(record, IcpdProxy):
             details.append(f"Overlord: {record.overlord_country_name_snapshot}")
+        ruling_party_ethics = (ruling_party_ethics_by_country_id or {}).get(record.country_id)
+        if ruling_party_ethics:
+            details.append(f"Ruling party ethics: {ruling_party_ethics}")
         blocks.append(f"**{country_label}**\n" + "\n".join(details))
 
     midpoint = (len(blocks) + 1) // 2
@@ -265,11 +406,28 @@ def _normalize_proxy_group_key(label: str) -> str:
     return normalized.strip("-")[:24] or "other-proxy"
 
 
+def _proxy_detail_label(
+    *,
+    country_id: str,
+    active_population_by_country_id: dict[str, int | None],
+    ruling_party_ethics_by_country_id: dict[str, str] | None,
+) -> str:
+    details = []
+    active_population = active_population_by_country_id.get(country_id)
+    if active_population is not None:
+        details.append(f"active `{active_population}`")
+    ruling_party_ethics = (ruling_party_ethics_by_country_id or {}).get(country_id)
+    if ruling_party_ethics:
+        details.append(f"ethics {ruling_party_ethics}")
+    return f" ({'; '.join(details)})" if details else ""
+
+
 def build_icpd_proxy_list_embed(
     records: Iterable[IcpdProxy],
     *,
     overlord_codes_by_id: dict[str, str],
     active_population_by_country_id: dict[str, int | None],
+    ruling_party_ethics_by_country_id: dict[str, str] | None = None,
 ) -> discord.Embed:
     embed = discord.Embed(title="ICPD Proxies")
     records_list = sorted(
@@ -305,13 +463,12 @@ def build_icpd_proxy_list_embed(
         for proxy in sorted(proxies, key=lambda record: record.country_name_snapshot.lower()):
             flag = country_flag(proxy.country_code)
             proxy_label = f"{flag} [{proxy.country_name_snapshot}]({country_link(proxy.country_id)})".strip()
-            active_population = active_population_by_country_id.get(proxy.country_id)
-            population_label = (
-                f" active `{active_population}`"
-                if active_population is not None
-                else ""
+            detail_label = _proxy_detail_label(
+                country_id=proxy.country_id,
+                active_population_by_country_id=active_population_by_country_id,
+                ruling_party_ethics_by_country_id=ruling_party_ethics_by_country_id,
             )
-            lines.append(f"- {proxy_label}{population_label}")
+            lines.append(f"- {proxy_label}{detail_label}")
 
         chunks = _chunk_lines(lines)
         overlord_label = _format_overlord_section_label(
@@ -342,6 +499,7 @@ def build_hostile_proxy_list_embed(
     *,
     overlord_codes_by_id: dict[str, str],
     active_population_by_country_id: dict[str, int | None],
+    ruling_party_ethics_by_country_id: dict[str, str] | None = None,
 ) -> discord.Embed:
     embed = discord.Embed(title="Hostile Proxies")
     records_list = sorted(
@@ -377,9 +535,12 @@ def build_hostile_proxy_list_embed(
         for proxy in sorted(proxies, key=lambda record: record.country_name_snapshot.lower()):
             flag = country_flag(proxy.country_code)
             proxy_label = f"{flag} [{proxy.country_name_snapshot}]({country_link(proxy.country_id)})".strip()
-            active_population = active_population_by_country_id.get(proxy.country_id)
-            population_label = f" active `{active_population}`" if active_population is not None else ""
-            lines.append(f"- {proxy_label}{population_label}")
+            detail_label = _proxy_detail_label(
+                country_id=proxy.country_id,
+                active_population_by_country_id=active_population_by_country_id,
+                ruling_party_ethics_by_country_id=ruling_party_ethics_by_country_id,
+            )
+            lines.append(f"- {proxy_label}{detail_label}")
 
         chunks = _chunk_lines(lines)
         overlord_label = _format_overlord_section_label(
@@ -410,6 +571,7 @@ def build_cooperator_proxy_list_embed(
     *,
     overlord_codes_by_id: dict[str, str],
     active_population_by_country_id: dict[str, int | None],
+    ruling_party_ethics_by_country_id: dict[str, str] | None = None,
 ) -> discord.Embed:
     embed = discord.Embed(title="Cooperator Proxies")
     records_list = sorted(
@@ -445,9 +607,12 @@ def build_cooperator_proxy_list_embed(
         for proxy in sorted(proxies, key=lambda record: record.country_name_snapshot.lower()):
             flag = country_flag(proxy.country_code)
             proxy_label = f"{flag} [{proxy.country_name_snapshot}]({country_link(proxy.country_id)})".strip()
-            active_population = active_population_by_country_id.get(proxy.country_id)
-            population_label = f" active `{active_population}`" if active_population is not None else ""
-            lines.append(f"- {proxy_label}{population_label}")
+            detail_label = _proxy_detail_label(
+                country_id=proxy.country_id,
+                active_population_by_country_id=active_population_by_country_id,
+                ruling_party_ethics_by_country_id=ruling_party_ethics_by_country_id,
+            )
+            lines.append(f"- {proxy_label}{detail_label}")
 
         chunks = _chunk_lines(lines)
         overlord_label = _format_overlord_section_label(
@@ -478,6 +643,7 @@ def build_other_proxy_list_embed(
     *,
     overlord_codes_by_id: dict[str, str],
     active_population_by_country_id: dict[str, int | None],
+    ruling_party_ethics_by_country_id: dict[str, str] | None = None,
 ) -> discord.Embed:
     embed = discord.Embed(title="Other Proxies")
     records_list = sorted(
@@ -513,9 +679,12 @@ def build_other_proxy_list_embed(
         for proxy in sorted(proxies, key=lambda record: record.country_name_snapshot.lower()):
             flag = country_flag(proxy.country_code)
             proxy_label = f"{flag} [{proxy.country_name_snapshot}]({country_link(proxy.country_id)})".strip()
-            active_population = active_population_by_country_id.get(proxy.country_id)
-            population_label = f" active `{active_population}`" if active_population is not None else ""
-            lines.append(f"- {proxy_label}{population_label}")
+            detail_label = _proxy_detail_label(
+                country_id=proxy.country_id,
+                active_population_by_country_id=active_population_by_country_id,
+                ruling_party_ethics_by_country_id=ruling_party_ethics_by_country_id,
+            )
+            lines.append(f"- {proxy_label}{detail_label}")
 
         chunks = _chunk_lines(lines)
         overlord_label = _format_overlord_section_label(
@@ -681,10 +850,18 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
             return
         async with bot.session_factory.session() as session:
             records = await SanctionedCountryService(session).list_all()
+            ethics_by_country_id = await ruling_party_ethics_by_country_id(
+                session,
+                [record.country_id for record in records],
+            )
 
         await send_embed_with_visibility_option(
             interaction,
-            embed=build_country_list_embed(title="Sanctioned Countries", records=records),
+            embed=build_country_list_embed(
+                title="Sanctioned Countries",
+                records=records,
+                ruling_party_ethics_by_country_id=ethics_by_country_id,
+            ),
             post_publicly=post_publicly,
             tag=tag,
         )
@@ -762,10 +939,18 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
             return
         async with bot.session_factory.session() as session:
             records = await IcpdCountryService(session).list_all()
+            ethics_by_country_id = await ruling_party_ethics_by_country_id(
+                session,
+                [record.country_id for record in records],
+            )
 
         await send_embed_with_visibility_option(
             interaction,
-            embed=build_country_list_embed(title="ICPD Countries", records=records),
+            embed=build_country_list_embed(
+                title="ICPD Countries",
+                records=records,
+                ruling_party_ethics_by_country_id=ethics_by_country_id,
+            ),
             post_publicly=post_publicly,
             tag=tag,
         )
@@ -1067,10 +1252,18 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
 
         async with bot.session_factory.session() as session:
             records = await CooperatorCountryService(session).list_all()
+            ethics_by_country_id = await ruling_party_ethics_by_country_id(
+                session,
+                [record.country_id for record in records],
+            )
 
         await send_embed_with_visibility_option(
             interaction,
-            embed=build_country_list_embed(title="Cooperator Countries", records=records),
+            embed=build_country_list_embed(
+                title="Cooperator Countries",
+                records=records,
+                ruling_party_ethics_by_country_id=ethics_by_country_id,
+            ),
             post_publicly=post_publicly,
             tag=tag,
         )
@@ -1215,6 +1408,10 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
                     select(WareraCountryCache).where(WareraCountryCache.country_id.in_(proxy_country_ids))
                 )
             ) if proxy_country_ids else []
+            ethics_by_country_id = await ruling_party_ethics_by_country_id(
+                session,
+                proxy_country_ids,
+            )
         overlord_codes_by_id = {
             country.country_id: country.country_code
             for country in icpd_countries
@@ -1230,6 +1427,7 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
                 records,
                 overlord_codes_by_id=overlord_codes_by_id,
                 active_population_by_country_id=active_population_by_country_id,
+                ruling_party_ethics_by_country_id=ethics_by_country_id,
             ),
             post_publicly=post_publicly,
             tag=tag,
@@ -1264,6 +1462,10 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
                     select(WareraCountryCache).where(WareraCountryCache.country_id.in_(country_ids))
                 )
             ) if country_ids else []
+            ethics_by_country_id = await ruling_party_ethics_by_country_id(
+                session,
+                proxy_country_ids,
+            )
 
         overlord_codes_by_id = {
             country.country_id: country.code
@@ -1280,6 +1482,7 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
                 records,
                 overlord_codes_by_id=overlord_codes_by_id,
                 active_population_by_country_id=active_population_by_country_id,
+                ruling_party_ethics_by_country_id=ethics_by_country_id,
             ),
             post_publicly=post_publicly,
             tag=tag,
@@ -1314,6 +1517,7 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
                     select(WareraCountryCache).where(WareraCountryCache.country_id.in_(country_ids))
                 )
             ) if country_ids else []
+            ethics_by_country_id = await ruling_party_ethics_by_country_id(session, country_ids)
         overlord_codes_by_id = {
             country.country_id: country.country_code
             for country in cooperator_countries
@@ -1329,6 +1533,7 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
                 records,
                 overlord_codes_by_id=overlord_codes_by_id,
                 active_population_by_country_id=active_population_by_country_id,
+                ruling_party_ethics_by_country_id=ethics_by_country_id,
             ),
             post_publicly=post_publicly,
             tag=tag,
@@ -1363,6 +1568,10 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
                     select(WareraCountryCache).where(WareraCountryCache.country_id.in_(country_ids))
                 )
             ) if country_ids else []
+            ethics_by_country_id = await ruling_party_ethics_by_country_id(
+                session,
+                proxy_country_ids,
+            )
         overlord_codes_by_id = {
             country.country_id: country.code
             for country in cached_countries
@@ -1378,6 +1587,7 @@ def build_country_management_commands(bot: "ICPDBot") -> list[app_commands.Comma
                 records,
                 overlord_codes_by_id=overlord_codes_by_id,
                 active_population_by_country_id=active_population_by_country_id,
+                ruling_party_ethics_by_country_id=ethics_by_country_id,
             ),
             post_publicly=post_publicly,
             tag=tag,
