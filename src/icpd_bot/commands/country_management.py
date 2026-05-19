@@ -159,8 +159,13 @@ def _prettify_ethic_key(key: str) -> str:
 
 
 ETHIC_LABELS: dict[str, tuple[str, str]] = {
-    "industrialism": ("Agrarist", "Industrialist"),
+    "diplomacy": ("Isolationist", "Diplomatic"),
+    "imperialism": ("Republican", "Imperialist"),
+    "industrialism": ("Agrarian", "Industrialist"),
+    "isolationism": ("Diplomatic", "Isolationist"),
     "militarism": ("Pacifist", "Militarist"),
+    "pacifism": ("Militarist", "Pacifist"),
+    "republicanism": ("Imperialist", "Republican"),
 }
 
 
@@ -232,9 +237,7 @@ def _party_ethics_label(party: WareraPartyCache) -> str | None:
     if not parts:
         return None
 
-    party_name = party.name.strip()
-    prefix = f"{party_name}: " if party_name else ""
-    return prefix + ", ".join(parts)
+    return " + ".join(parts)
 
 
 async def ruling_party_ethics_by_country_id(
@@ -322,7 +325,7 @@ def build_country_list_embed(
             details.append(f"Overlord: {record.overlord_country_name_snapshot}")
         ruling_party_ethics = (ruling_party_ethics_by_country_id or {}).get(record.country_id)
         if ruling_party_ethics:
-            details.append(f"Ruling party ethics: {ruling_party_ethics}")
+            details.append(ruling_party_ethics)
         blocks.append(f"**{country_label}**\n" + "\n".join(details))
 
     midpoint = (len(blocks) + 1) // 2
@@ -418,7 +421,7 @@ def _proxy_detail_label(
         details.append(f"active `{active_population}`")
     ruling_party_ethics = (ruling_party_ethics_by_country_id or {}).get(country_id)
     if ruling_party_ethics:
-        details.append(f"ethics {ruling_party_ethics}")
+        details.append(ruling_party_ethics)
     return f" ({'; '.join(details)})" if details else ""
 
 

@@ -667,6 +667,14 @@ async def test_build_recommendations_manual_override_keeps_region_country_and_bo
                     industrialism=-2,
                     raw_payload=None,
                 ),
+                IcpdProxy(
+                    country_id="proxy-1",
+                    country_code="bn",
+                    country_name_snapshot="Brunei",
+                    overlord_country_id="icpd-1",
+                    overlord_country_name_snapshot="ICPD Owner",
+                    created_by=1,
+                ),
                 WareraRegionCache(
                     region_id="region-1",
                     code="bn-brunei",

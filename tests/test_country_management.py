@@ -31,12 +31,13 @@ def test_build_country_list_embed_shows_ruling_party_ethics() -> None:
             )
         ],
         ruling_party_ethics_by_country_id={
-            "country-1": "Agrarian Party: Fanatic Agrarist",
+            "country-1": "Fanatic Agrarian",
         },
     )
 
     assert len(embed.fields) == 2
-    assert "Ruling party ethics: Agrarian Party: Fanatic Agrarist" in embed.fields[0].value
+    assert "Fanatic Agrarian" in embed.fields[0].value
+    assert "Ruling party ethics" not in embed.fields[0].value
 
 
 @pytest.mark.asyncio
@@ -60,7 +61,7 @@ async def test_ruling_party_ethics_by_country_id_reads_cached_party_payload() ->
                     name="Agrarian Party",
                     country_id="country-1",
                     industrialism=-2,
-                    raw_payload='{"ethics":{"industrialism":-2,"militarism":1}}',
+                    raw_payload='{"ethics":{"imperialism":-1,"industrialism":-2,"militarism":2}}',
                 ),
             ]
         )
@@ -70,7 +71,7 @@ async def test_ruling_party_ethics_by_country_id_reads_cached_party_payload() ->
 
     await engine.dispose()
 
-    assert labels == {"country-1": "Agrarian Party: Fanatic Agrarist, Militarist"}
+    assert labels == {"country-1": "Republican + Fanatic Agrarian + Fanatic Militarist"}
 
 
 def test_build_icpd_proxy_list_embed_shows_active_population() -> None:
@@ -88,13 +89,14 @@ def test_build_icpd_proxy_list_embed_shows_active_population() -> None:
         overlord_codes_by_id={"icpd-1": "id"},
         active_population_by_country_id={"proxy-1": 13},
         ruling_party_ethics_by_country_id={
-            "proxy-1": "Industrialists: Fanatic Industrialist",
+            "proxy-1": "Fanatic Industrialist",
         },
     )
 
     assert len(embed.fields) == 1
     assert "active `13`" in embed.fields[0].value
-    assert "ethics Industrialists: Fanatic Industrialist" in embed.fields[0].value
+    assert "Fanatic Industrialist" in embed.fields[0].value
+    assert "ethics" not in embed.fields[0].value
 
 
 def test_build_hostile_proxy_list_embed_shows_active_population() -> None:
