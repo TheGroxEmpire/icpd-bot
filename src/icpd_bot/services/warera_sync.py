@@ -33,7 +33,7 @@ class WareraSyncCounts:
 
 
 class WareraSyncService:
-    PARTY_BATCH_SIZE = 100
+    PARTY_BATCH_SIZE = 25
 
     def __init__(self, session: AsyncSession, client: WareraClient) -> None:
         self.session = session

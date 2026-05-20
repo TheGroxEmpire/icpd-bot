@@ -36,7 +36,7 @@ def build_sync_commands(bot: "ICPDBot") -> list[app_commands.Command[Any, ..., N
             return
 
         await interaction.response.defer(ephemeral=True)
-        await interaction.followup.send("Warera cache sync started.", ephemeral=True)
+        await interaction.edit_original_response(content="Warera cache sync started.")
 
         try:
             async with WareraClient(

@@ -29,6 +29,10 @@ class FakeInteraction:
     def __init__(self) -> None:
         self.response = FakeResponse()
         self.followup = FakeFollowup()
+        self.edited_messages: list[str] = []
+
+    async def edit_original_response(self, *, content: str) -> None:
+        self.edited_messages.append(content)
 
 
 class FakeSession:
@@ -155,9 +159,9 @@ async def test_sync_warera_cache_reports_success_before_post_sync_failure(
     messages = [message for message, ephemeral in interaction.followup.messages]
     assert interaction.response.deferred is True
     assert all(ephemeral for message, ephemeral in interaction.followup.messages)
-    assert messages[0] == "Warera cache sync started."
-    assert messages[1] == "Warera cache synced. Countries: 7, regions: 42."
-    assert messages[2].startswith("Warera cache synced, but post-sync alerts")
+    assert interaction.edited_messages == ["Warera cache sync started."]
+    assert messages[0] == "Warera cache synced. Countries: 7, regions: 42."
+    assert messages[1].startswith("Warera cache synced, but post-sync alerts")
     assert bot.refresh_due_embeds_calls == 1
 
 
@@ -187,8 +191,8 @@ async def test_sync_warera_cache_reports_sync_failure(
     sync_state = bot.session_factory.session_obj.sync_state
     assert interaction.response.deferred is True
     assert all(ephemeral for message, ephemeral in interaction.followup.messages)
+    assert interaction.edited_messages == ["Warera cache sync started."]
     assert messages == [
-        "Warera cache sync started.",
         "Warera cache sync failed. RuntimeError. Check the bot logs for details.",
     ]
     assert bot.refresh_due_embeds_calls == 0

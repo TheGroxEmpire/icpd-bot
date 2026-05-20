@@ -79,6 +79,38 @@ class FakeWareraClientWithEmbeddedParty:
         }
 
 
+class FakeWareraClientWithManyEmbeddedParties:
+    def __init__(self, party_count: int) -> None:
+        self.party_count = party_count
+        self.requested_party_batches: list[list[str]] = []
+
+    async def get_all_countries(self) -> list[dict[str, object]]:
+        return [
+            {
+                "_id": f"country-{index:03d}",
+                "code": f"c{index:03d}",
+                "name": f"Country {index}",
+                "specializedItem": None,
+                "rulingParty": {"_id": f"party-{index:03d}"},
+            }
+            for index in range(self.party_count)
+        ]
+
+    async def get_regions_object(self) -> dict[str, dict[str, object]]:
+        return {}
+
+    async def get_parties_by_id(self, party_ids: list[str]) -> dict[str, dict[str, object]]:
+        self.requested_party_batches.append(list(party_ids))
+        return {
+            party_id: {
+                "name": f"Party {party_id}",
+                "country": None,
+                "ethics": {"industrialism": 1},
+            }
+            for party_id in party_ids
+        }
+
+
 class FakeWareraClientWithProxyPopulation:
     def __init__(self, active_population: int) -> None:
         self.active_population = active_population
@@ -181,6 +213,27 @@ async def test_sync_loads_parties_when_country_payload_embeds_ruling_party() -> 
     assert client.requested_party_ids == ["party-1"]
     assert party is not None
     assert party.industrialism == 2
+
+
+@pytest.mark.asyncio
+async def test_sync_batches_embedded_ruling_parties_below_upstream_payload_limit() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    client = FakeWareraClientWithManyEmbeddedParties(party_count=60)
+    async with session_factory() as session:
+        await WareraSyncService(session, client).sync()
+        await session.commit()
+
+        party = await session.get(WareraPartyCache, "party-059")
+
+    await engine.dispose()
+
+    assert [len(batch) for batch in client.requested_party_batches] == [25, 25, 10]
+    assert party is not None
+    assert party.industrialism == 1
 
 
 @pytest.mark.asyncio
